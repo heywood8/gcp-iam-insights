@@ -53,16 +53,30 @@ func BuildReports(ctx context.Context, cfg BuildConfig) ([]ServiceAccountReport,
 		fmt.Fprintf(os.Stderr, "Found %d service accounts\n", len(accountsToProcess))
 	}
 
-	// 2. Get project-level IAM bindings + inherited bindings from Asset Inventory.
+	// 2. Get project-level IAM bindings + inherited bindings from Asset Inventory (in parallel).
 	fmt.Fprintf(os.Stderr, "Fetching IAM bindings...\n")
-	projectBindings, err := cfg.IAM.ListProjectBindings(ctx, cfg.Project)
-	if err != nil {
-		return nil, fmt.Errorf("list project bindings: %w", err)
+	var projectBindings, assetBindings []gcp.ProjectBinding
+	var projectErr, assetErr error
+	var bindingsWg sync.WaitGroup
+
+	bindingsWg.Add(2)
+	go func() {
+		defer bindingsWg.Done()
+		projectBindings, projectErr = cfg.IAM.ListProjectBindings(ctx, cfg.Project)
+	}()
+	go func() {
+		defer bindingsWg.Done()
+		assetBindings, assetErr = cfg.Asset.SearchIAMPolicies(ctx, cfg.Project)
+	}()
+	bindingsWg.Wait()
+
+	if projectErr != nil {
+		return nil, fmt.Errorf("list project bindings: %w", projectErr)
 	}
-	assetBindings, err := cfg.Asset.SearchIAMPolicies(ctx, cfg.Project)
-	if err != nil {
-		return nil, fmt.Errorf("search asset IAM policies: %w", err)
+	if assetErr != nil {
+		return nil, fmt.Errorf("search asset IAM policies: %w", assetErr)
 	}
+
 	allBindings := make([]gcp.ProjectBinding, 0, len(projectBindings)+len(assetBindings))
 	allBindings = append(allBindings, projectBindings...)
 	allBindings = append(allBindings, assetBindings...)
