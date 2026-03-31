@@ -9,6 +9,7 @@ import (
 	loggingpb "cloud.google.com/go/logging/apiv2/loggingpb"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 // AuditEntry represents a single relevant audit log entry for a SA.
@@ -66,15 +67,31 @@ func (c *realLoggingClient) QueryAuditLogs(ctx context.Context, project, saEmail
 			Timestamp: entry.Timestamp.AsTime(),
 		}
 
-		// Extract methodName and serviceName from jsonPayload if present.
-		// Note: GCP audit logs encode protoPayload as google.protobuf.Any wrapping
-		// google.cloud.audit.AuditLog. The jsonPayload path works for structured entries.
-		if jp := entry.GetJsonPayload(); jp != nil {
-			if mn, ok := jp.Fields["methodName"]; ok {
-				ae.MethodName = mn.GetStringValue()
+		// Extract methodName and serviceName from protoPayload.
+		// GCP audit logs use protoPayload containing google.cloud.audit.AuditLog.
+		// The SDK represents this as a Struct after unpacking.
+		var payload *structpb.Struct
+		if pp := entry.GetProtoPayload(); pp != nil {
+			payload = &structpb.Struct{}
+			if err := pp.UnmarshalTo(payload); err == nil {
+				if mn, ok := payload.Fields["methodName"]; ok {
+					ae.MethodName = mn.GetStringValue()
+				}
+				if sn, ok := payload.Fields["serviceName"]; ok {
+					ae.ServiceName = sn.GetStringValue()
+				}
 			}
-			if sn, ok := jp.Fields["serviceName"]; ok {
-				ae.ServiceName = sn.GetStringValue()
+		}
+
+		// Fallback: try jsonPayload for non-audit structured logs
+		if ae.MethodName == "" && ae.ServiceName == "" {
+			if jp := entry.GetJsonPayload(); jp != nil {
+				if mn, ok := jp.Fields["methodName"]; ok {
+					ae.MethodName = mn.GetStringValue()
+				}
+				if sn, ok := jp.Fields["serviceName"]; ok {
+					ae.ServiceName = sn.GetStringValue()
+				}
 			}
 		}
 
