@@ -38,7 +38,9 @@ func BuildReports(ctx context.Context, cfg BuildConfig) ([]ServiceAccountReport,
 	if err != nil {
 		return nil, fmt.Errorf("search asset IAM policies: %w", err)
 	}
-	allBindings := append(projectBindings, assetBindings...)
+	allBindings := make([]gcp.ProjectBinding, 0, len(projectBindings)+len(assetBindings))
+	allBindings = append(allBindings, projectBindings...)
+	allBindings = append(allBindings, assetBindings...)
 
 	// Build a map from SA email → set of bound roles.
 	rolesBySA := map[string]map[string]bool{}
@@ -132,15 +134,15 @@ func BuildReports(ctx context.Context, cfg BuildConfig) ([]ServiceAccountReport,
 			}
 		}
 
-		// Determine LastUsed: metrics confirm activity within the window (non-empty activeAPIs),
-		// fall back to the most recent audit log timestamp.
+		// Determine LastUsed: prefer audit log timestamp — it's the most precise signal (actual call time).
+		// Metrics fallback: if APIs were active within the window but no audit log captured a timestamp.
 		var lastUsed *time.Time
-		if len(activeAPIs) > 0 {
+		if latestLog != nil {
+			lastUsed = latestLog
+		}
+		if lastUsed == nil && len(activeAPIs) > 0 {
 			now := time.Now()
 			lastUsed = &now
-		}
-		if latestLog != nil && (lastUsed == nil || latestLog.After(*lastUsed)) {
-			lastUsed = latestLog
 		}
 
 		reports = append(reports, ServiceAccountReport{
