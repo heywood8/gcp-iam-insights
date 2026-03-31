@@ -37,6 +37,11 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if len(reports) == 0 {
+		fmt.Fprintln(os.Stderr, "No service accounts to analyze")
+		return nil
+	}
+
 	roleRegistry, err := loadRoleRegistry()
 	if err != nil {
 		return err
@@ -46,6 +51,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	warnDays, _ := cmd.Flags().GetInt("warn-days")
 	criticalDays, _ := cmd.Flags().GetInt("critical-days")
 
+	fmt.Fprintf(os.Stderr, "Running privilege and dormancy analyzers...\n")
 	var all []analyzer.Finding
 	for _, r := range reports {
 		all = append(all, analyzer.AnalyzePrivilege(r, analyzer.PrivilegeConfig{
@@ -59,6 +65,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		})...)
 	}
 
+	fmt.Fprintf(os.Stderr, "Found %d finding(s)\n\n", len(all))
 	return renderer.Render(all)
 }
 

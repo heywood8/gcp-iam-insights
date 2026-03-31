@@ -25,12 +25,33 @@ type BuildConfig struct {
 // ServiceAccountReport for each service account in the project.
 func BuildReports(ctx context.Context, cfg BuildConfig) ([]ServiceAccountReport, error) {
 	// 1. List service accounts.
+	fmt.Fprintf(os.Stderr, "Discovering service accounts in project %s...\n", cfg.Project)
 	sas, err := cfg.IAM.ListServiceAccounts(ctx, cfg.Project)
 	if err != nil {
 		return nil, fmt.Errorf("list service accounts: %w", err)
 	}
 
+	// Filter if needed and report count.
+	accountsToProcess := sas
+	if cfg.ServiceAccountFilter != "" {
+		filtered := []gcp.ServiceAccount{}
+		for _, sa := range sas {
+			if sa.Email == cfg.ServiceAccountFilter {
+				filtered = append(filtered, sa)
+			}
+		}
+		accountsToProcess = filtered
+		if len(filtered) == 0 {
+			fmt.Fprintf(os.Stderr, "No service accounts match filter: %s\n", cfg.ServiceAccountFilter)
+			return nil, nil
+		}
+		fmt.Fprintf(os.Stderr, "Found 1 service account matching filter\n")
+	} else {
+		fmt.Fprintf(os.Stderr, "Found %d service accounts\n", len(accountsToProcess))
+	}
+
 	// 2. Get project-level IAM bindings + inherited bindings from Asset Inventory.
+	fmt.Fprintf(os.Stderr, "Fetching IAM bindings...\n")
 	projectBindings, err := cfg.IAM.ListProjectBindings(ctx, cfg.Project)
 	if err != nil {
 		return nil, fmt.Errorf("list project bindings: %w", err)
@@ -62,10 +83,12 @@ func BuildReports(ctx context.Context, cfg BuildConfig) ([]ServiceAccountReport,
 	since := time.Now().Add(-cfg.LookbackWindow)
 	var reports []ServiceAccountReport
 
-	for _, sa := range sas {
-		if cfg.ServiceAccountFilter != "" && sa.Email != cfg.ServiceAccountFilter {
-			continue
-		}
+	fmt.Fprintf(os.Stderr, "\nAnalyzing service accounts (lookback: %d days)...\n", int(cfg.LookbackWindow.Hours()/24))
+
+	processed := 0
+	for _, sa := range accountsToProcess {
+		processed++
+		fmt.Fprintf(os.Stderr, "[%d/%d] Processing %s\n", processed, len(accountsToProcess), sa.Email)
 
 		// 3. Collect bound roles.
 		var roles []string
@@ -78,18 +101,20 @@ func BuildReports(ctx context.Context, cfg BuildConfig) ([]ServiceAccountReport,
 		if err != nil {
 			return nil, fmt.Errorf("list keys for %s: %w", sa.Email, err)
 		}
+		fmt.Fprintf(os.Stderr, "  - Found %d key(s)\n", len(gcpKeys))
 
 		// 5. Fetch Cloud Monitoring metrics (non-fatal: log warnings and continue with empty data).
+		fmt.Fprintf(os.Stderr, "  - Querying Cloud Monitoring metrics...\n")
 		activeAPIs := map[string]int64{}
 		if apis, err := cfg.Monitoring.GetRequestCountPerAPI(ctx, cfg.Project, sa.UniqueID, since); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: could not fetch request count metrics for %s: %v\n", sa.Email, err)
+			fmt.Fprintf(os.Stderr, "  warning: could not fetch request count metrics: %v\n", err)
 		} else {
 			activeAPIs = apis
 		}
 
 		authnPerKey := map[string]int64{}
 		if authn, err := cfg.Monitoring.GetAuthnEventsPerKey(ctx, cfg.Project, sa.UniqueID, since); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: could not fetch authn event metrics for %s: %v\n", sa.Email, err)
+			fmt.Fprintf(os.Stderr, "  warning: could not fetch authn event metrics: %v\n", err)
 		} else {
 			authnPerKey = authn
 		}
@@ -105,11 +130,15 @@ func BuildReports(ctx context.Context, cfg BuildConfig) ([]ServiceAccountReport,
 		}
 
 		// 6. Fetch audit logs (non-fatal: log warning and continue with empty data).
+		fmt.Fprintf(os.Stderr, "  - Querying Cloud Logging audit logs...\n")
 		var logEntries []gcp.AuditEntry
 		if entries, err := cfg.Logging.QueryAuditLogs(ctx, cfg.Project, sa.Email, since); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: could not query audit logs for %s: %v\n", sa.Email, err)
+			fmt.Fprintf(os.Stderr, "  warning: could not query audit logs: %v\n", err)
 		} else {
 			logEntries = entries
+			if len(entries) > 0 {
+				fmt.Fprintf(os.Stderr, "  - Found %d audit log entries\n", len(entries))
+			}
 		}
 
 		// Deduplicate exercised permissions and find APIs with no log coverage.
@@ -167,5 +196,6 @@ func BuildReports(ctx context.Context, cfg BuildConfig) ([]ServiceAccountReport,
 		})
 	}
 
+	fmt.Fprintf(os.Stderr, "\nCompleted analysis of %d service account(s)\n\n", len(reports))
 	return reports, nil
 }
