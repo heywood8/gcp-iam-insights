@@ -40,11 +40,22 @@ func (f *fakeAsset) SearchIAMPolicies(_ context.Context, _ string) ([]gcp.Projec
 // fakeLogging implements gcp.LoggingClient.
 type fakeLogging struct{}
 
-func (f *fakeLogging) QueryAuditLogs(_ context.Context, _, _ string, _ time.Time) ([]gcp.AuditEntry, error) {
+func (f *fakeLogging) QueryAuditLogs(_ context.Context, _, saEmail string, _ time.Time) ([]gcp.AuditEntry, error) {
 	ts := time.Now().Add(-5 * 24 * time.Hour)
 	return []gcp.AuditEntry{
-		{Timestamp: ts, MethodName: "storage.objects.get", ServiceName: "storage.googleapis.com"},
+		{ServiceAccount: saEmail, Timestamp: ts, MethodName: "storage.objects.get", ServiceName: "storage.googleapis.com"},
 	}, nil
+}
+
+func (f *fakeLogging) QueryAuditLogsBatch(_ context.Context, _ string, saEmails []string, _ time.Time) (map[string][]gcp.AuditEntry, error) {
+	ts := time.Now().Add(-5 * 24 * time.Hour)
+	result := make(map[string][]gcp.AuditEntry)
+	for _, email := range saEmails {
+		result[email] = []gcp.AuditEntry{
+			{ServiceAccount: email, Timestamp: ts, MethodName: "storage.objects.get", ServiceName: "storage.googleapis.com"},
+		}
+	}
+	return result, nil
 }
 
 // fakeMonitoring implements gcp.MonitoringClient.

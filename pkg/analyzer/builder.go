@@ -85,6 +85,24 @@ func BuildReports(ctx context.Context, cfg BuildConfig) ([]ServiceAccountReport,
 
 	fmt.Fprintf(os.Stderr, "\nAnalyzing service accounts (lookback: %d days)...\n", int(cfg.LookbackWindow.Hours()/24))
 
+	// Fetch audit logs in a single batched query for all SAs to avoid quota exhaustion
+	fmt.Fprintf(os.Stderr, "Fetching audit logs for all service accounts (batched query)...\n")
+	saEmails := make([]string, len(accountsToProcess))
+	for i, sa := range accountsToProcess {
+		saEmails[i] = sa.Email
+	}
+	auditLogsBySA := map[string][]gcp.AuditEntry{}
+	if logsBatch, err := cfg.Logging.QueryAuditLogsBatch(ctx, cfg.Project, saEmails, since); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not query audit logs in batch: %v\n", err)
+	} else {
+		auditLogsBySA = logsBatch
+		totalLogs := 0
+		for _, logs := range logsBatch {
+			totalLogs += len(logs)
+		}
+		fmt.Fprintf(os.Stderr, "Found %d total audit log entries across %d service accounts\n", totalLogs, len(accountsToProcess))
+	}
+
 	processed := 0
 	for _, sa := range accountsToProcess {
 		processed++
@@ -135,16 +153,10 @@ func BuildReports(ctx context.Context, cfg BuildConfig) ([]ServiceAccountReport,
 			})
 		}
 
-		// 6. Fetch audit logs (non-fatal: log warning and continue with empty data).
-		fmt.Fprintf(os.Stderr, "  - Querying Cloud Logging audit logs...\n")
-		var logEntries []gcp.AuditEntry
-		if entries, err := cfg.Logging.QueryAuditLogs(ctx, cfg.Project, sa.Email, since); err != nil {
-			fmt.Fprintf(os.Stderr, "  warning: could not query audit logs: %v\n", err)
-		} else {
-			logEntries = entries
-			if len(entries) > 0 {
-				fmt.Fprintf(os.Stderr, "  - Found %d audit log entries\n", len(entries))
-			}
+		// 6. Use pre-fetched audit logs from batch query.
+		logEntries := auditLogsBySA[sa.Email]
+		if len(logEntries) > 0 {
+			fmt.Fprintf(os.Stderr, "  - Found %d audit log entries\n", len(logEntries))
 		}
 
 		// Process audit logs: extract permissions, API activity, and last used timestamp.

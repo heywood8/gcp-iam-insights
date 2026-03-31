@@ -14,14 +14,16 @@ import (
 
 // AuditEntry represents a single relevant audit log entry for a SA.
 type AuditEntry struct {
-	Timestamp   time.Time
-	MethodName  string // e.g. "storage.objects.get"
-	ServiceName string // e.g. "storage.googleapis.com"
+	ServiceAccount string // principalEmail from the audit log
+	Timestamp      time.Time
+	MethodName     string // e.g. "storage.objects.get"
+	ServiceName    string // e.g. "storage.googleapis.com"
 }
 
 // LoggingClient is the interface for Cloud Logging audit log queries.
 type LoggingClient interface {
 	QueryAuditLogs(ctx context.Context, project, saEmail string, since time.Time) ([]AuditEntry, error)
+	QueryAuditLogsBatch(ctx context.Context, project string, saEmails []string, since time.Time) (map[string][]AuditEntry, error)
 }
 
 type realLoggingClient struct {
@@ -38,12 +40,30 @@ func NewLoggingClient(ctx context.Context, opts ...option.ClientOption) (Logging
 }
 
 func (c *realLoggingClient) QueryAuditLogs(ctx context.Context, project, saEmail string, since time.Time) ([]AuditEntry, error) {
+	result, err := c.QueryAuditLogsBatch(ctx, project, []string{saEmail}, since)
+	if err != nil {
+		return nil, err
+	}
+	return result[saEmail], nil
+}
+
+func (c *realLoggingClient) QueryAuditLogsBatch(ctx context.Context, project string, saEmails []string, since time.Time) (map[string][]AuditEntry, error) {
+	// Build filter for multiple service accounts using OR
+	// Format: (principalEmail="sa1" OR principalEmail="sa2" OR ...) AND logName... AND timestamp...
+	emailFilters := ""
+	for i, email := range saEmails {
+		if i > 0 {
+			emailFilters += " OR "
+		}
+		emailFilters += fmt.Sprintf(`protoPayload.authenticationInfo.principalEmail="%s"`, email)
+	}
+
 	filter := fmt.Sprintf(
-		`protoPayload.authenticationInfo.principalEmail="%s" `+
+		`(%s) `+
 			`AND (logName="projects/%s/logs/cloudaudit.googleapis.com%%2Factivity" `+
 			`OR logName="projects/%s/logs/cloudaudit.googleapis.com%%2Fdata_access") `+
 			`AND timestamp>="%s"`,
-		saEmail, project, project, since.UTC().Format(time.RFC3339),
+		emailFilters, project, project, since.UTC().Format(time.RFC3339),
 	)
 
 	req := &loggingpb.ListLogEntriesRequest{
@@ -53,7 +73,13 @@ func (c *realLoggingClient) QueryAuditLogs(ctx context.Context, project, saEmail
 	}
 
 	it := c.client.ListLogEntries(ctx, req)
-	var entries []AuditEntry
+	result := make(map[string][]AuditEntry)
+
+	// Initialize empty slices for all requested SAs
+	for _, email := range saEmails {
+		result[email] = []AuditEntry{}
+	}
+
 	for {
 		entry, err := it.Next()
 		if err == iterator.Done {
@@ -67,13 +93,21 @@ func (c *realLoggingClient) QueryAuditLogs(ctx context.Context, project, saEmail
 			Timestamp: entry.Timestamp.AsTime(),
 		}
 
-		// Extract methodName and serviceName from protoPayload.
+		// Extract principalEmail, methodName and serviceName from protoPayload.
 		// GCP audit logs use protoPayload containing google.cloud.audit.AuditLog.
 		// The SDK represents this as a Struct after unpacking.
 		var payload *structpb.Struct
 		if pp := entry.GetProtoPayload(); pp != nil {
 			payload = &structpb.Struct{}
 			if err := pp.UnmarshalTo(payload); err == nil {
+				// Extract principalEmail from authenticationInfo
+				if authInfo, ok := payload.Fields["authenticationInfo"]; ok {
+					if authStruct := authInfo.GetStructValue(); authStruct != nil {
+						if pe, ok := authStruct.Fields["principalEmail"]; ok {
+							ae.ServiceAccount = pe.GetStringValue()
+						}
+					}
+				}
 				if mn, ok := payload.Fields["methodName"]; ok {
 					ae.MethodName = mn.GetStringValue()
 				}
@@ -95,7 +129,10 @@ func (c *realLoggingClient) QueryAuditLogs(ctx context.Context, project, saEmail
 			}
 		}
 
-		entries = append(entries, ae)
+		// Group by service account
+		if ae.ServiceAccount != "" {
+			result[ae.ServiceAccount] = append(result[ae.ServiceAccount], ae)
+		}
 	}
-	return entries, nil
+	return result, nil
 }

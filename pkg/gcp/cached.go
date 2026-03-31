@@ -37,6 +37,43 @@ func (c *cachedLoggingClient) QueryAuditLogs(ctx context.Context, project, saEma
 	return entries, nil
 }
 
+func (c *cachedLoggingClient) QueryAuditLogsBatch(ctx context.Context, project string, saEmails []string, since time.Time) (map[string][]AuditEntry, error) {
+	// Check cache for each SA individually
+	result := make(map[string][]AuditEntry)
+	uncachedSAs := []string{}
+
+	for _, email := range saEmails {
+		cacheKey := fmt.Sprintf("logs-%s-%s", email, since.Format("2006-01-02"))
+		if data, ok, err := c.cache.Get(project, cacheKey); err == nil && ok {
+			var entries []AuditEntry
+			if err := json.Unmarshal(data, &entries); err == nil {
+				result[email] = entries
+				continue
+			}
+		}
+		uncachedSAs = append(uncachedSAs, email)
+	}
+
+	// Fetch uncached SAs in a batch
+	if len(uncachedSAs) > 0 {
+		batchResult, err := c.inner.QueryAuditLogsBatch(ctx, project, uncachedSAs, since)
+		if err != nil {
+			return nil, err
+		}
+
+		// Cache results for each SA
+		for email, entries := range batchResult {
+			cacheKey := fmt.Sprintf("logs-%s-%s", email, since.Format("2006-01-02"))
+			if data, err := json.Marshal(entries); err == nil {
+				_ = c.cache.Set(project, cacheKey, data)
+			}
+			result[email] = entries
+		}
+	}
+
+	return result, nil
+}
+
 // cachedMonitoringClient wraps MonitoringClient with disk cache.
 type cachedMonitoringClient struct {
 	inner MonitoringClient
