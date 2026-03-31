@@ -1,9 +1,11 @@
 package analyzer
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/heywood8/gcp-iam-insights/pkg/gcp"
@@ -81,7 +83,7 @@ func BuildReports(ctx context.Context, cfg BuildConfig) ([]ServiceAccountReport,
 	}
 
 	since := time.Now().Add(-cfg.LookbackWindow)
-	var reports []ServiceAccountReport
+	reports := make([]ServiceAccountReport, len(accountsToProcess))
 
 	fmt.Fprintf(os.Stderr, "\nAnalyzing service accounts (lookback: %d days)...\n", int(cfg.LookbackWindow.Hours()/24))
 
@@ -103,116 +105,144 @@ func BuildReports(ctx context.Context, cfg BuildConfig) ([]ServiceAccountReport,
 		fmt.Fprintf(os.Stderr, "Found %d total audit log entries across %d service accounts\n", totalLogs, len(accountsToProcess))
 	}
 
-	processed := 0
-	for _, sa := range accountsToProcess {
-		processed++
-		fmt.Fprintf(os.Stderr, "[%d/%d] Processing %s\n", processed, len(accountsToProcess), sa.Email)
+	// Process service accounts in parallel with worker pool
+	const maxWorkers = 10
+	sem := make(chan struct{}, maxWorkers)
+	var wg sync.WaitGroup
+	logBuffers := make([]*bytes.Buffer, len(accountsToProcess))
 
-		// 3. Collect bound roles.
-		var roles []string
-		for role := range rolesBySA[sa.Email] {
-			roles = append(roles, role)
-		}
+	for idx, sa := range accountsToProcess {
+		wg.Add(1)
+		go func(i int, account gcp.ServiceAccount) {
+			defer wg.Done()
+			sem <- struct{}{}        // Acquire worker slot
+			defer func() { <-sem }() // Release worker slot
 
-		// 4. Fetch SA keys.
-		gcpKeys, err := cfg.IAM.ListServiceAccountKeys(ctx, cfg.Project, sa.Email)
-		if err != nil {
-			return nil, fmt.Errorf("list keys for %s: %w", sa.Email, err)
-		}
-		fmt.Fprintf(os.Stderr, "  - Found %d key(s)\n", len(gcpKeys))
+			// Buffer logs for this SA to print in order later
+			buf := &bytes.Buffer{}
+			logBuffers[i] = buf
+			fmt.Fprintf(buf, "[%d/%d] Processing %s\n", i+1, len(accountsToProcess), account.Email)
 
-		// 5. Fetch Cloud Monitoring metrics (non-fatal: log warning and continue with empty data).
-		fmt.Fprintf(os.Stderr, "  - Querying Cloud Monitoring metrics...\n")
-
-		// API usage per service from metrics
-		apiUsageFromMetrics := map[string]int64{}
-		if usage, err := cfg.Monitoring.GetAPIUsagePerService(ctx, cfg.Project, sa.UniqueID, since); err != nil {
-			fmt.Fprintf(os.Stderr, "  warning: could not fetch API usage metrics: %v\n", err)
-		} else {
-			apiUsageFromMetrics = usage
-			if len(usage) > 0 {
-				fmt.Fprintf(os.Stderr, "  - Found API usage for %d service(s) from metrics\n", len(usage))
+			// 3. Collect bound roles.
+			var roles []string
+			for role := range rolesBySA[account.Email] {
+				roles = append(roles, role)
 			}
-		}
 
-		// Authn events per key
-		authnPerKey := map[string]int64{}
-		if authn, err := cfg.Monitoring.GetAuthnEventsPerKey(ctx, cfg.Project, sa.UniqueID, since); err != nil {
-			fmt.Fprintf(os.Stderr, "  warning: could not fetch authn event metrics: %v\n", err)
-		} else {
-			authnPerKey = authn
-		}
-
-		// Merge authn events into keys.
-		saKeys := make([]SAKey, 0, len(gcpKeys))
-		for _, k := range gcpKeys {
-			saKeys = append(saKeys, SAKey{
-				KeyID:       k.KeyID,
-				CreateTime:  k.CreateTime,
-				AuthnEvents: authnPerKey[k.KeyID],
-			})
-		}
-
-		// 6. Use pre-fetched audit logs from batch query.
-		logEntries := auditLogsBySA[sa.Email]
-		if len(logEntries) > 0 {
-			fmt.Fprintf(os.Stderr, "  - Found %d audit log entries\n", len(logEntries))
-		}
-
-		// Process audit logs: extract permissions, API activity, and last used timestamp.
-		permSet := map[string]bool{}
-		apiCallCountFromLogs := map[string]int64{}
-		var latestLog *time.Time
-		for _, entry := range logEntries {
-			if entry.MethodName != "" {
-				permSet[entry.MethodName] = true
+			// 4. Fetch SA keys.
+			gcpKeys, err := cfg.IAM.ListServiceAccountKeys(ctx, cfg.Project, account.Email)
+			if err != nil {
+				fmt.Fprintf(buf, "  error: list keys for %s: %v\n", account.Email, err)
+				return
 			}
-			if entry.ServiceName != "" {
-				apiCallCountFromLogs[entry.ServiceName]++
-			}
-			t := entry.Timestamp
-			if latestLog == nil || t.After(*latestLog) {
-				latestLog = &t
-			}
-		}
+			fmt.Fprintf(buf, "  - Found %d key(s)\n", len(gcpKeys))
 
-		var exercisedPerms []string
-		for p := range permSet {
-			exercisedPerms = append(exercisedPerms, p)
-		}
+			// 5. Fetch Cloud Monitoring metrics (non-fatal: log warning and continue with empty data).
+			fmt.Fprintf(buf, "  - Querying Cloud Monitoring metrics...\n")
 
-		// Combine API usage from metrics and logs. Prefer metrics (more complete), supplement with logs.
-		activeAPIs := map[string]int64{}
-		for svc, count := range apiUsageFromMetrics {
-			activeAPIs[svc] = count
-		}
-		for svc, count := range apiCallCountFromLogs {
-			if activeAPIs[svc] == 0 {
+			// API usage per service from metrics
+			apiUsageFromMetrics := map[string]int64{}
+			if usage, err := cfg.Monitoring.GetAPIUsagePerService(ctx, cfg.Project, account.UniqueID, since); err != nil {
+				fmt.Fprintf(buf, "  warning: could not fetch API usage metrics: %v\n", err)
+			} else {
+				apiUsageFromMetrics = usage
+				if len(usage) > 0 {
+					fmt.Fprintf(buf, "  - Found API usage for %d service(s) from metrics\n", len(usage))
+				}
+			}
+
+			// Authn events per key
+			authnPerKey := map[string]int64{}
+			if authn, err := cfg.Monitoring.GetAuthnEventsPerKey(ctx, cfg.Project, account.UniqueID, since); err != nil {
+				fmt.Fprintf(buf, "  warning: could not fetch authn event metrics: %v\n", err)
+			} else {
+				authnPerKey = authn
+			}
+
+			// Merge authn events into keys.
+			saKeys := make([]SAKey, 0, len(gcpKeys))
+			for _, k := range gcpKeys {
+				saKeys = append(saKeys, SAKey{
+					KeyID:       k.KeyID,
+					CreateTime:  k.CreateTime,
+					AuthnEvents: authnPerKey[k.KeyID],
+				})
+			}
+
+			// 6. Use pre-fetched audit logs from batch query.
+			logEntries := auditLogsBySA[account.Email]
+			if len(logEntries) > 0 {
+				fmt.Fprintf(buf, "  - Found %d audit log entries\n", len(logEntries))
+			}
+
+			// Process audit logs: extract permissions, API activity, and last used timestamp.
+			permSet := map[string]bool{}
+			apiCallCountFromLogs := map[string]int64{}
+			var latestLog *time.Time
+			for _, entry := range logEntries {
+				if entry.MethodName != "" {
+					permSet[entry.MethodName] = true
+				}
+				if entry.ServiceName != "" {
+					apiCallCountFromLogs[entry.ServiceName]++
+				}
+				t := entry.Timestamp
+				if latestLog == nil || t.After(*latestLog) {
+					latestLog = &t
+				}
+			}
+
+			var exercisedPerms []string
+			for p := range permSet {
+				exercisedPerms = append(exercisedPerms, p)
+			}
+
+			// Combine API usage from metrics and logs. Prefer metrics (more complete), supplement with logs.
+			activeAPIs := map[string]int64{}
+			for svc, count := range apiUsageFromMetrics {
 				activeAPIs[svc] = count
 			}
-		}
+			for svc, count := range apiCallCountFromLogs {
+				if activeAPIs[svc] == 0 {
+					activeAPIs[svc] = count
+				}
+			}
 
-		// LastUsed: prefer audit log timestamp (more precise), but if metrics show activity and no logs, use now.
-		var lastUsed *time.Time
-		if latestLog != nil {
-			lastUsed = latestLog
-		} else if len(apiUsageFromMetrics) > 0 || len(authnPerKey) > 0 {
-			// Metrics show activity but no audit logs - service account is active but logs incomplete
-			now := time.Now()
-			lastUsed = &now
-		}
+			// LastUsed: prefer audit log timestamp (more precise), but if metrics show activity and no logs, use now.
+			var lastUsed *time.Time
+			if latestLog != nil {
+				lastUsed = latestLog
+			} else if len(apiUsageFromMetrics) > 0 || len(authnPerKey) > 0 {
+				// Metrics show activity but no audit logs - service account is active but logs incomplete
+				now := time.Now()
+				lastUsed = &now
+			}
 
-		reports = append(reports, ServiceAccountReport{
-			Email:          sa.Email,
-			UniqueID:       sa.UniqueID,
-			DisplayName:    sa.DisplayName,
-			Roles:          roles,
-			Keys:           saKeys,
-			ActiveAPIs:     activeAPIs,
-			ExercisedPerms: exercisedPerms,
-			LastUsed:       lastUsed,
-			LookbackWindow: cfg.LookbackWindow,
-		})
+			// Write to pre-allocated slice at this goroutine's index
+			reports[i] = ServiceAccountReport{
+				Email:          account.Email,
+				UniqueID:       account.UniqueID,
+				DisplayName:    account.DisplayName,
+				Roles:          roles,
+				Keys:           saKeys,
+				ActiveAPIs:     activeAPIs,
+				ExercisedPerms: exercisedPerms,
+				LastUsed:       lastUsed,
+				LookbackWindow: cfg.LookbackWindow,
+			}
+		}(idx, sa)
+	}
+
+	// Wait for all workers to complete
+	wg.Wait()
+
+	// Print buffered logs in order
+	for i, buf := range logBuffers {
+		if buf != nil {
+			os.Stderr.Write(buf.Bytes())
+		} else {
+			fmt.Fprintf(os.Stderr, "[%d/%d] Processing failed (no log buffer)\n", i+1, len(accountsToProcess))
+		}
 	}
 
 	fmt.Fprintf(os.Stderr, "\nCompleted analysis of %d service account(s)\n\n", len(reports))
