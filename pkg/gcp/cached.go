@@ -11,13 +11,12 @@ import (
 
 // cachedLoggingClient wraps LoggingClient with disk cache.
 type cachedLoggingClient struct {
-	inner   LoggingClient
-	cache   *cache.Cache
-	project string
+	inner LoggingClient
+	cache *cache.Cache
 }
 
-func NewCachedLoggingClient(inner LoggingClient, c *cache.Cache, project string) LoggingClient {
-	return &cachedLoggingClient{inner: inner, cache: c, project: project}
+func NewCachedLoggingClient(inner LoggingClient, c *cache.Cache) LoggingClient {
+	return &cachedLoggingClient{inner: inner, cache: c}
 }
 
 func (c *cachedLoggingClient) QueryAuditLogs(ctx context.Context, project, saEmail string, since time.Time) ([]AuditEntry, error) {
@@ -40,13 +39,12 @@ func (c *cachedLoggingClient) QueryAuditLogs(ctx context.Context, project, saEma
 
 // cachedMonitoringClient wraps MonitoringClient with disk cache.
 type cachedMonitoringClient struct {
-	inner   MonitoringClient
-	cache   *cache.Cache
-	project string
+	inner MonitoringClient
+	cache *cache.Cache
 }
 
-func NewCachedMonitoringClient(inner MonitoringClient, c *cache.Cache, project string) MonitoringClient {
-	return &cachedMonitoringClient{inner: inner, cache: c, project: project}
+func NewCachedMonitoringClient(inner MonitoringClient, c *cache.Cache) MonitoringClient {
+	return &cachedMonitoringClient{inner: inner, cache: c}
 }
 
 func (c *cachedMonitoringClient) GetRequestCountPerAPI(ctx context.Context, project, saUniqueID string, since time.Time) (map[string]int64, error) {

@@ -135,8 +135,8 @@ func buildReportsAndRenderer(ctx context.Context, cmd *cobra.Command) ([]analyze
 			fmt.Fprintln(os.Stderr, "warning: could not determine cache dir, skipping cache:", err)
 		} else {
 			c := cache.New(baseDir, cacheTTL)
-			loggingCached = gcp.NewCachedLoggingClient(loggingClient, c, project)
-			monitoringCached = gcp.NewCachedMonitoringClient(monitoringClient, c, project)
+			loggingCached = gcp.NewCachedLoggingClient(loggingClient, c)
+			monitoringCached = gcp.NewCachedMonitoringClient(monitoringClient, c)
 		}
 	}
 
