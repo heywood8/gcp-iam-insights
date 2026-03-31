@@ -44,7 +44,7 @@ func AnalyzeDormancy(report ServiceAccountReport, cfg DormancyConfig) []Finding 
 			Severity:       SeverityCritical,
 			Type:           FindingTypeNeverUsed,
 			Message:        "service account has never been used (no metric data or audit log entries found)",
-			Remediation:    "review whether this service account is needed; if not, disable or delete it",
+			Remediation:    "review & disable/delete if unneeded",
 			Links:          links,
 		}}
 	}
@@ -57,7 +57,7 @@ func AnalyzeDormancy(report ServiceAccountReport, cfg DormancyConfig) []Finding 
 			Severity:       SeverityCritical,
 			Type:           FindingTypeDormant,
 			Message:        fmt.Sprintf("service account has been inactive for %d days (threshold: %d)", daysSince, cfg.CriticalDays),
-			Remediation:    "review whether this service account is still needed; consider disabling it",
+			Remediation:    "review & consider disabling",
 			Details:        map[string]string{"days_inactive": fmt.Sprintf("%d", daysSince)},
 			Links:          links,
 		}}
@@ -69,7 +69,7 @@ func AnalyzeDormancy(report ServiceAccountReport, cfg DormancyConfig) []Finding 
 			Severity:       SeverityWarn,
 			Type:           FindingTypeDormant,
 			Message:        fmt.Sprintf("service account has been inactive for %d days (threshold: %d)", daysSince, cfg.WarnDays),
-			Remediation:    "verify this service account is still in use",
+			Remediation:    "verify still in use",
 			Details:        map[string]string{"days_inactive": fmt.Sprintf("%d", daysSince)},
 			Links:          links,
 		}}

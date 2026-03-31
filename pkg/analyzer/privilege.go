@@ -34,7 +34,7 @@ func AnalyzePrivilege(report ServiceAccountReport, cfg PrivilegeConfig) []Findin
 				Severity:       SeverityCritical,
 				Type:           FindingTypePrimitiveRole,
 				Message:        fmt.Sprintf("service account has primitive role %s — always too broad", role),
-				Remediation:    fmt.Sprintf("replace %s with a predefined or custom role scoped to actual API usage", role),
+				Remediation:    fmt.Sprintf("replace %s with narrower role", role),
 				Details:        map[string]string{"role": role},
 				Links:          links,
 			})
@@ -55,7 +55,7 @@ func AnalyzePrivilege(report ServiceAccountReport, cfg PrivilegeConfig) []Findin
 						"key %s has no authentication traffic but the service account is active (key age: %d days)",
 						key.KeyID, ageDays,
 					),
-					Remediation: fmt.Sprintf("delete unused key %s — it is an unnecessary credential with no operational use", key.KeyID),
+					Remediation: fmt.Sprintf("delete unused key %s", key.KeyID),
 					Details: map[string]string{
 						"key_id":       key.KeyID,
 						"key_age_days": fmt.Sprintf("%d", ageDays),
@@ -101,10 +101,10 @@ func AnalyzePrivilege(report ServiceAccountReport, cfg PrivilegeConfig) []Findin
 	}
 
 	msg := fmt.Sprintf("service account has broader permissions than it uses; suggest: %s", strings.Join(suggested, ", "))
-	remediation := fmt.Sprintf("rebind to: %s", strings.Join(suggested, ", "))
+	remediation := strings.Join(suggested, ", ")
 	if cfg.SuggestCustomRoles {
 		msg = fmt.Sprintf("service account has broader permissions than it uses; suggested custom role permissions: %s", strings.Join(report.ExercisedPerms, ", "))
-		remediation = fmt.Sprintf("create a custom role with only: %s", strings.Join(report.ExercisedPerms, ", "))
+		remediation = fmt.Sprintf("custom role: %s", strings.Join(report.ExercisedPerms, ", "))
 	}
 
 	findings = append(findings, Finding{

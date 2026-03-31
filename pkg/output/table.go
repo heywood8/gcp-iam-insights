@@ -15,7 +15,7 @@ type tableRenderer struct {
 
 func (r *tableRenderer) Render(findings []analyzer.Finding) error {
 	table := tablewriter.NewTable(r.w,
-		tablewriter.WithHeader([]string{"Service Account", "Severity", "Type", "Message", "Remediation"}),
+		tablewriter.WithHeader([]string{"Service Account", "Severity", "Type", "Remediation"}),
 	)
 
 	for _, f := range findings {
@@ -24,7 +24,6 @@ func (r *tableRenderer) Render(findings []analyzer.Finding) error {
 			shortenSAName(f.ServiceAccount),
 			severity,
 			string(f.Type),
-			f.Message,
 			f.Remediation,
 		}); err != nil {
 			return err
