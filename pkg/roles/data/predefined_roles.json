@@ -1,0 +1,33 @@
+{
+  "roles/viewer": [
+    "resourcemanager.projects.get",
+    "resourcemanager.projects.list",
+    "bigquery.datasets.get",
+    "storage.buckets.get",
+    "storage.objects.get"
+  ],
+  "roles/storage.objectViewer": [
+    "storage.objects.get",
+    "storage.objects.list"
+  ],
+  "roles/storage.objectCreator": [
+    "storage.objects.create"
+  ],
+  "roles/storage.objectAdmin": [
+    "storage.objects.create",
+    "storage.objects.delete",
+    "storage.objects.get",
+    "storage.objects.list",
+    "storage.objects.update"
+  ],
+  "roles/bigquery.dataViewer": [
+    "bigquery.datasets.get",
+    "bigquery.models.getData",
+    "bigquery.models.getMetadata",
+    "bigquery.models.list",
+    "bigquery.routines.get",
+    "bigquery.routines.list",
+    "bigquery.tables.getData",
+    "bigquery.tables.list"
+  ]
+}
