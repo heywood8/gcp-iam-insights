@@ -15,6 +15,7 @@ import (
 // MonitoringClient is the interface for Cloud Monitoring metric queries.
 type MonitoringClient interface {
 	GetAuthnEventsPerKey(ctx context.Context, project, saUniqueID string, since time.Time) (map[string]int64, error)
+	GetAPIUsagePerService(ctx context.Context, project, saUniqueID string, since time.Time) (map[string]int64, error)
 }
 
 type realMonitoringClient struct {
@@ -32,8 +33,18 @@ func NewMonitoringClient(ctx context.Context, opts ...option.ClientOption) (Moni
 
 func (c *realMonitoringClient) GetAuthnEventsPerKey(ctx context.Context, project, saUniqueID string, since time.Time) (map[string]int64, error) {
 	return c.queryTimeSeries(ctx, project, saUniqueID,
-		"iam.googleapis.com/service_account/authn_events_count",
+		"iam.googleapis.com/service_account/key/authn_events_count",
 		"key_id",
+		since,
+	)
+}
+
+func (c *realMonitoringClient) GetAPIUsagePerService(ctx context.Context, project, saUniqueID string, since time.Time) (map[string]int64, error) {
+	// Try the main service account authn_events_count metric with service label
+	// This tracks which services the SA authenticated to
+	return c.queryTimeSeries(ctx, project, saUniqueID,
+		"iam.googleapis.com/service_account/authn_events_count",
+		"service",
 		since,
 	)
 }

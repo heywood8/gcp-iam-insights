@@ -103,8 +103,21 @@ func BuildReports(ctx context.Context, cfg BuildConfig) ([]ServiceAccountReport,
 		}
 		fmt.Fprintf(os.Stderr, "  - Found %d key(s)\n", len(gcpKeys))
 
-		// 5. Fetch Cloud Monitoring authn events per key (non-fatal: log warning and continue with empty data).
-		fmt.Fprintf(os.Stderr, "  - Querying Cloud Monitoring authn events...\n")
+		// 5. Fetch Cloud Monitoring metrics (non-fatal: log warning and continue with empty data).
+		fmt.Fprintf(os.Stderr, "  - Querying Cloud Monitoring metrics...\n")
+
+		// API usage per service from metrics
+		apiUsageFromMetrics := map[string]int64{}
+		if usage, err := cfg.Monitoring.GetAPIUsagePerService(ctx, cfg.Project, sa.UniqueID, since); err != nil {
+			fmt.Fprintf(os.Stderr, "  warning: could not fetch API usage metrics: %v\n", err)
+		} else {
+			apiUsageFromMetrics = usage
+			if len(usage) > 0 {
+				fmt.Fprintf(os.Stderr, "  - Found API usage for %d service(s) from metrics\n", len(usage))
+			}
+		}
+
+		// Authn events per key
 		authnPerKey := map[string]int64{}
 		if authn, err := cfg.Monitoring.GetAuthnEventsPerKey(ctx, cfg.Project, sa.UniqueID, since); err != nil {
 			fmt.Fprintf(os.Stderr, "  warning: could not fetch authn event metrics: %v\n", err)
@@ -136,14 +149,14 @@ func BuildReports(ctx context.Context, cfg BuildConfig) ([]ServiceAccountReport,
 
 		// Process audit logs: extract permissions, API activity, and last used timestamp.
 		permSet := map[string]bool{}
-		apiCallCount := map[string]int64{}
+		apiCallCountFromLogs := map[string]int64{}
 		var latestLog *time.Time
 		for _, entry := range logEntries {
 			if entry.MethodName != "" {
 				permSet[entry.MethodName] = true
 			}
 			if entry.ServiceName != "" {
-				apiCallCount[entry.ServiceName]++
+				apiCallCountFromLogs[entry.ServiceName]++
 			}
 			t := entry.Timestamp
 			if latestLog == nil || t.After(*latestLog) {
@@ -156,10 +169,25 @@ func BuildReports(ctx context.Context, cfg BuildConfig) ([]ServiceAccountReport,
 			exercisedPerms = append(exercisedPerms, p)
 		}
 
-		// LastUsed is the most recent audit log timestamp (nil if no logs found).
+		// Combine API usage from metrics and logs. Prefer metrics (more complete), supplement with logs.
+		activeAPIs := map[string]int64{}
+		for svc, count := range apiUsageFromMetrics {
+			activeAPIs[svc] = count
+		}
+		for svc, count := range apiCallCountFromLogs {
+			if activeAPIs[svc] == 0 {
+				activeAPIs[svc] = count
+			}
+		}
+
+		// LastUsed: prefer audit log timestamp (more precise), but if metrics show activity and no logs, use now.
 		var lastUsed *time.Time
 		if latestLog != nil {
 			lastUsed = latestLog
+		} else if len(apiUsageFromMetrics) > 0 || len(authnPerKey) > 0 {
+			// Metrics show activity but no audit logs - service account is active but logs incomplete
+			now := time.Now()
+			lastUsed = &now
 		}
 
 		reports = append(reports, ServiceAccountReport{
@@ -168,7 +196,7 @@ func BuildReports(ctx context.Context, cfg BuildConfig) ([]ServiceAccountReport,
 			DisplayName:    sa.DisplayName,
 			Roles:          roles,
 			Keys:           saKeys,
-			ActiveAPIs:     apiCallCount,
+			ActiveAPIs:     activeAPIs,
 			ExercisedPerms: exercisedPerms,
 			LastUsed:       lastUsed,
 			LookbackWindow: cfg.LookbackWindow,
