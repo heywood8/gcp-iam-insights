@@ -1,0 +1,38 @@
+# Binaries
+dist/
+!dist/.gitkeep
+gcp-iam-insights
+fetch-roles
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go workspace
+go.work
+go.work.sum
+
+# Cache
+vendor/
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# GCP credentials — never commit these
+*.json
+!pkg/roles/data/predefined_roles.json
+
+# Local cache
+.cache/
+
+# Claude superpowers
+docs/superpowers
