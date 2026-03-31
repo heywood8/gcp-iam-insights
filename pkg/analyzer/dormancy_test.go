@@ -79,3 +79,33 @@ func TestDormancy_NeverUsed(t *testing.T) {
 		t.Fatalf("expected CRITICAL for never-used, got %s", findings[0].Severity)
 	}
 }
+
+func TestDormancy_DefaultGAE_NeverUsed(t *testing.T) {
+	report := analyzer.ServiceAccountReport{
+		Email:    "my-project@appspot.gserviceaccount.com",
+		LastUsed: nil,
+	}
+	findings := analyzer.AnalyzeDormancy(report, analyzer.DormancyConfig{
+		Project:      "my-project",
+		WarnDays:     30,
+		CriticalDays: 90,
+	})
+	if len(findings) != 0 {
+		t.Fatalf("expected no findings for default GAE SA, got %v", findings)
+	}
+}
+
+func TestDormancy_DefaultGCE_NeverUsed(t *testing.T) {
+	report := analyzer.ServiceAccountReport{
+		Email:    "123456789-compute@developer.gserviceaccount.com",
+		LastUsed: nil,
+	}
+	findings := analyzer.AnalyzeDormancy(report, analyzer.DormancyConfig{
+		Project:      "my-project",
+		WarnDays:     30,
+		CriticalDays: 90,
+	})
+	if len(findings) != 0 {
+		t.Fatalf("expected no findings for default GCE SA, got %v", findings)
+	}
+}

@@ -2,6 +2,7 @@ package analyzer
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -12,6 +13,20 @@ type DormancyConfig struct {
 	CriticalDays int
 }
 
+// isDefaultGCPServiceAccount returns true for system-managed service accounts
+// that are created by default and may legitimately never be used.
+func isDefaultGCPServiceAccount(email string) bool {
+	// App Engine default service account: <project>@appspot.gserviceaccount.com
+	if strings.HasSuffix(email, "@appspot.gserviceaccount.com") {
+		return true
+	}
+	// Compute Engine default service account: <project-number>-compute@developer.gserviceaccount.com
+	if strings.HasSuffix(email, "-compute@developer.gserviceaccount.com") {
+		return true
+	}
+	return false
+}
+
 // AnalyzeDormancy returns dormancy findings for a single ServiceAccountReport.
 // It uses LastUsed (derived from Cloud Monitoring metrics, falling back to audit
 // log timestamps) as the activity signal.
@@ -19,6 +34,11 @@ func AnalyzeDormancy(report ServiceAccountReport, cfg DormancyConfig) []Finding 
 	links := GenerateConsoleLinks(cfg.Project, report.Email, report.LookbackWindow)
 
 	if report.LastUsed == nil {
+		// Skip NEVER_USED findings for default GCP service accounts (GAE, GCE)
+		// as they may be created automatically and legitimately unused
+		if isDefaultGCPServiceAccount(report.Email) {
+			return nil
+		}
 		return []Finding{{
 			ServiceAccount: report.Email,
 			Severity:       SeverityCritical,

@@ -2,6 +2,7 @@ package output
 
 import (
 	"io"
+	"strings"
 
 	"github.com/fatih/color"
 	"github.com/heywood8/gcp-iam-insights/pkg/analyzer"
@@ -10,6 +11,14 @@ import (
 
 type tableRenderer struct {
 	w io.Writer
+}
+
+// shortenSAName strips the @<project>.iam.gserviceaccount.com suffix from SA emails.
+func shortenSAName(email string) string {
+	if idx := strings.Index(email, "@"); idx != -1 {
+		return email[:idx]
+	}
+	return email
 }
 
 func (r *tableRenderer) Render(findings []analyzer.Finding) error {
@@ -21,7 +30,7 @@ func (r *tableRenderer) Render(findings []analyzer.Finding) error {
 		severity := colorSeverity(f.Severity)
 		links := formatLinks(f.Links)
 		if err := table.Append([]string{
-			f.ServiceAccount,
+			shortenSAName(f.ServiceAccount),
 			severity,
 			string(f.Type),
 			f.Message,
