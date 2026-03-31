@@ -32,32 +32,29 @@ func NewMonitoringClient(ctx context.Context, opts ...option.ClientOption) (Moni
 }
 
 func (c *realMonitoringClient) GetAuthnEventsPerKey(ctx context.Context, project, saUniqueID string, since time.Time) (map[string]int64, error) {
-	return c.queryTimeSeries(ctx, project, saUniqueID,
-		"iam.googleapis.com/service_account/key/authn_events_count",
-		"key_id",
-		since,
+	// Key-level metric uses metric.labels.key_id, not resource.labels
+	// Filter by service account unique_id at resource level to get all keys for this SA
+	filter := fmt.Sprintf(
+		`metric.type="iam.googleapis.com/service_account/key/authn_events_count" AND resource.type="iam_service_account" AND resource.labels.unique_id="%s"`,
+		saUniqueID,
 	)
+	return c.queryTimeSeriesWithMetricLabel(ctx, project, filter, "key_id", since)
 }
 
 func (c *realMonitoringClient) GetAPIUsagePerService(ctx context.Context, project, saUniqueID string, since time.Time) (map[string]int64, error) {
-	// Try the main service account authn_events_count metric with service label
-	// This tracks which services the SA authenticated to
-	return c.queryTimeSeries(ctx, project, saUniqueID,
-		"iam.googleapis.com/service_account/authn_events_count",
-		"service",
-		since,
+	// Service account level metric uses resource.labels.unique_id
+	filter := fmt.Sprintf(
+		`metric.type="iam.googleapis.com/service_account/authn_events_count" AND resource.type="iam_service_account" AND resource.labels.unique_id="%s"`,
+		saUniqueID,
 	)
+	return c.queryTimeSeriesWithMetricLabel(ctx, project, filter, "service", since)
 }
 
-func (c *realMonitoringClient) queryTimeSeries(
+func (c *realMonitoringClient) queryTimeSeriesWithMetricLabel(
 	ctx context.Context,
-	project, saUniqueID, metricType, labelKey string,
+	project, filter, metricLabelKey string,
 	since time.Time,
 ) (map[string]int64, error) {
-	filter := fmt.Sprintf(
-		`metric.type="%s" AND resource.type="iam_service_account" AND resource.labels.unique_id="%s"`,
-		metricType, saUniqueID,
-	)
 	req := &monitoringpb.ListTimeSeriesRequest{
 		Name:   "projects/" + project,
 		Filter: filter,
@@ -76,10 +73,11 @@ func (c *realMonitoringClient) queryTimeSeries(
 			break
 		}
 		if err != nil {
-			return nil, fmt.Errorf("iterate time series for %s: %w", metricType, err)
+			return nil, fmt.Errorf("iterate time series: %w", err)
 		}
 
-		labelVal := ts.Metric.Labels[labelKey]
+		// Extract label value from metric labels
+		labelVal := ts.Metric.Labels[metricLabelKey]
 		if labelVal == "" {
 			labelVal = "unknown"
 		}
