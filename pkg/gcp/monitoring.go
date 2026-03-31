@@ -14,7 +14,6 @@ import (
 
 // MonitoringClient is the interface for Cloud Monitoring metric queries.
 type MonitoringClient interface {
-	GetRequestCountPerAPI(ctx context.Context, project, saUniqueID string, since time.Time) (map[string]int64, error)
 	GetAuthnEventsPerKey(ctx context.Context, project, saUniqueID string, since time.Time) (map[string]int64, error)
 }
 
@@ -29,14 +28,6 @@ func NewMonitoringClient(ctx context.Context, opts ...option.ClientOption) (Moni
 		return nil, fmt.Errorf("create monitoring client: %w", err)
 	}
 	return &realMonitoringClient{client: c}, nil
-}
-
-func (c *realMonitoringClient) GetRequestCountPerAPI(ctx context.Context, project, saUniqueID string, since time.Time) (map[string]int64, error) {
-	return c.queryTimeSeries(ctx, project, saUniqueID,
-		"iam.googleapis.com/service_account/request_count",
-		"service",
-		since,
-	)
 }
 
 func (c *realMonitoringClient) GetAuthnEventsPerKey(ctx context.Context, project, saUniqueID string, since time.Time) (map[string]int64, error) {

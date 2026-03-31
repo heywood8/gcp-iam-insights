@@ -88,12 +88,7 @@ func AnalyzePrivilege(report ServiceAccountReport, cfg PrivilegeConfig) []Findin
 			cfg.Project,
 			strings.Join(report.ExercisedPerms, ","),
 		)
-		if len(report.SparseAPIs) > 0 {
-			details["warning"] = fmt.Sprintf(
-				"audit logs incomplete for %s — custom role may be under-scoped",
-				strings.Join(report.SparseAPIs, ", "),
-			)
-		}
+		details["note"] = "Custom role based on audit logs; may be under-scoped if audit logging is incomplete"
 	} else {
 		details["suggested_roles"] = strings.Join(suggested, ", ")
 	}

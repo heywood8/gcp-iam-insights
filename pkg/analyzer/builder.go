@@ -103,15 +103,8 @@ func BuildReports(ctx context.Context, cfg BuildConfig) ([]ServiceAccountReport,
 		}
 		fmt.Fprintf(os.Stderr, "  - Found %d key(s)\n", len(gcpKeys))
 
-		// 5. Fetch Cloud Monitoring metrics (non-fatal: log warnings and continue with empty data).
-		fmt.Fprintf(os.Stderr, "  - Querying Cloud Monitoring metrics...\n")
-		activeAPIs := map[string]int64{}
-		if apis, err := cfg.Monitoring.GetRequestCountPerAPI(ctx, cfg.Project, sa.UniqueID, since); err != nil {
-			fmt.Fprintf(os.Stderr, "  warning: could not fetch request count metrics: %v\n", err)
-		} else {
-			activeAPIs = apis
-		}
-
+		// 5. Fetch Cloud Monitoring authn events per key (non-fatal: log warning and continue with empty data).
+		fmt.Fprintf(os.Stderr, "  - Querying Cloud Monitoring authn events...\n")
 		authnPerKey := map[string]int64{}
 		if authn, err := cfg.Monitoring.GetAuthnEventsPerKey(ctx, cfg.Project, sa.UniqueID, since); err != nil {
 			fmt.Fprintf(os.Stderr, "  warning: could not fetch authn event metrics: %v\n", err)
@@ -141,16 +134,16 @@ func BuildReports(ctx context.Context, cfg BuildConfig) ([]ServiceAccountReport,
 			}
 		}
 
-		// Deduplicate exercised permissions and find APIs with no log coverage.
+		// Process audit logs: extract permissions, API activity, and last used timestamp.
 		permSet := map[string]bool{}
-		loggedAPIs := map[string]bool{}
+		apiCallCount := map[string]int64{}
 		var latestLog *time.Time
 		for _, entry := range logEntries {
 			if entry.MethodName != "" {
 				permSet[entry.MethodName] = true
 			}
 			if entry.ServiceName != "" {
-				loggedAPIs[entry.ServiceName] = true
+				apiCallCount[entry.ServiceName]++
 			}
 			t := entry.Timestamp
 			if latestLog == nil || t.After(*latestLog) {
@@ -163,23 +156,10 @@ func BuildReports(ctx context.Context, cfg BuildConfig) ([]ServiceAccountReport,
 			exercisedPerms = append(exercisedPerms, p)
 		}
 
-		// APIs active in metrics but absent from audit logs.
-		var sparseAPIs []string
-		for api, count := range activeAPIs {
-			if count > 0 && !loggedAPIs[api] {
-				sparseAPIs = append(sparseAPIs, api)
-			}
-		}
-
-		// Determine LastUsed: prefer audit log timestamp — it's the most precise signal (actual call time).
-		// Metrics fallback: if APIs were active within the window but no audit log captured a timestamp.
+		// LastUsed is the most recent audit log timestamp (nil if no logs found).
 		var lastUsed *time.Time
 		if latestLog != nil {
 			lastUsed = latestLog
-		}
-		if lastUsed == nil && len(activeAPIs) > 0 {
-			now := time.Now()
-			lastUsed = &now
 		}
 
 		reports = append(reports, ServiceAccountReport{
@@ -188,9 +168,8 @@ func BuildReports(ctx context.Context, cfg BuildConfig) ([]ServiceAccountReport,
 			DisplayName:    sa.DisplayName,
 			Roles:          roles,
 			Keys:           saKeys,
-			ActiveAPIs:     activeAPIs,
+			ActiveAPIs:     apiCallCount,
 			ExercisedPerms: exercisedPerms,
-			SparseAPIs:     sparseAPIs,
 			LastUsed:       lastUsed,
 			LookbackWindow: cfg.LookbackWindow,
 		})

@@ -54,21 +54,16 @@ type ServiceAccountReport struct {
 	Keys []SAKey
 
 	// ActiveAPIs maps GCP API service names (e.g. "storage.googleapis.com") to
-	// total request count over the lookback window. Source: Cloud Monitoring
-	// iam.googleapis.com/service_account/request_count. This is the primary
-	// activity signal — more complete than audit logs.
+	// call count over the lookback window. Source: Cloud Logging audit logs.
+	// Best-effort: audit logs may be incomplete if not enabled for all APIs.
 	ActiveAPIs map[string]int64
 
 	// ExercisedPerms lists IAM permissions observed in audit logs
 	// (e.g. "storage.objects.get"). Best-effort: audit logs may be incomplete.
 	ExercisedPerms []string
 
-	// SparseAPIs lists API services that appear active in metrics but have no
-	// corresponding audit log entries (logs not enabled or calls not audit-logged).
-	SparseAPIs []string
-
-	// LastUsed is the most recent activity timestamp. Nil means never seen.
-	// Derived from Cloud Monitoring first, then audit logs as fallback.
+	// LastUsed is the most recent activity timestamp from audit logs.
+	// Nil means no audit log entries found (may indicate never used, or logs not enabled).
 	LastUsed *time.Time
 
 	// LookbackWindow is the duration used for metric and log queries.

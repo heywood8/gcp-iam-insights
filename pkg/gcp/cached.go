@@ -47,24 +47,6 @@ func NewCachedMonitoringClient(inner MonitoringClient, c *cache.Cache) Monitorin
 	return &cachedMonitoringClient{inner: inner, cache: c}
 }
 
-func (c *cachedMonitoringClient) GetRequestCountPerAPI(ctx context.Context, project, saUniqueID string, since time.Time) (map[string]int64, error) {
-	cacheKey := fmt.Sprintf("metrics-requests-%s-%s", saUniqueID, since.Format("2006-01-02"))
-	if data, ok, err := c.cache.Get(project, cacheKey); err == nil && ok {
-		var m map[string]int64
-		if err := json.Unmarshal(data, &m); err == nil {
-			return m, nil
-		}
-	}
-	result, err := c.inner.GetRequestCountPerAPI(ctx, project, saUniqueID, since)
-	if err != nil {
-		return nil, err
-	}
-	if data, err := json.Marshal(result); err == nil {
-		_ = c.cache.Set(project, cacheKey, data)
-	}
-	return result, nil
-}
-
 func (c *cachedMonitoringClient) GetAuthnEventsPerKey(ctx context.Context, project, saUniqueID string, since time.Time) (map[string]int64, error) {
 	cacheKey := fmt.Sprintf("metrics-authn-%s-%s", saUniqueID, since.Format("2006-01-02"))
 	if data, ok, err := c.cache.Get(project, cacheKey); err == nil && ok {

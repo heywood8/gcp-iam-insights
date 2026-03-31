@@ -50,10 +50,6 @@ func (f *fakeLogging) QueryAuditLogs(_ context.Context, _, _ string, _ time.Time
 // fakeMonitoring implements gcp.MonitoringClient.
 type fakeMonitoring struct{}
 
-func (f *fakeMonitoring) GetRequestCountPerAPI(_ context.Context, _, _ string, _ time.Time) (map[string]int64, error) {
-	return map[string]int64{"storage.googleapis.com": 500}, nil
-}
-
 func (f *fakeMonitoring) GetAuthnEventsPerKey(_ context.Context, _, _ string, _ time.Time) (map[string]int64, error) {
 	return map[string]int64{"key-abc": 10}, nil
 }
@@ -81,8 +77,8 @@ func TestBuildReports_SingleSA(t *testing.T) {
 	if len(r.Roles) != 1 || r.Roles[0] != "roles/storage.objectAdmin" {
 		t.Errorf("unexpected roles: %v", r.Roles)
 	}
-	if r.ActiveAPIs["storage.googleapis.com"] != 500 {
-		t.Errorf("unexpected ActiveAPIs: %v", r.ActiveAPIs)
+	if r.ActiveAPIs["storage.googleapis.com"] != 1 {
+		t.Errorf("unexpected ActiveAPIs (should be call count from audit logs): %v", r.ActiveAPIs)
 	}
 	if len(r.ExercisedPerms) == 0 {
 		t.Error("expected exercised perms from audit logs")
