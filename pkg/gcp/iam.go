@@ -3,6 +3,7 @@ package gcp
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"google.golang.org/api/cloudresourcemanager/v1"
@@ -109,13 +110,13 @@ func (c *realIAMClient) ListServiceAccountKeys(ctx context.Context, project, saE
 	}
 	keys := make([]SAKey, 0, len(resp.Keys))
 	for _, k := range resp.Keys {
-		ct, _ := time.Parse(time.RFC3339, k.ValidAfterTime)
+		ct, err := time.Parse(time.RFC3339, k.ValidAfterTime)
+		if err != nil {
+			ct = time.Time{} // zero time; key age will be unknown
+		}
 		keyID := k.Name
-		for i := len(k.Name) - 1; i >= 0; i-- {
-			if k.Name[i] == '/' {
-				keyID = k.Name[i+1:]
-				break
-			}
+		if idx := strings.LastIndexByte(k.Name, '/'); idx >= 0 {
+			keyID = k.Name[idx+1:]
 		}
 		keys = append(keys, SAKey{KeyID: keyID, CreateTime: ct})
 	}
