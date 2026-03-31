@@ -20,7 +20,7 @@ func NewCachedLoggingClient(inner LoggingClient, c *cache.Cache) LoggingClient {
 }
 
 func (c *cachedLoggingClient) QueryAuditLogs(ctx context.Context, project, saEmail string, since time.Time) ([]AuditEntry, error) {
-	cacheKey := fmt.Sprintf("logs-%s", saEmail)
+	cacheKey := fmt.Sprintf("logs-%s-%s", saEmail, since.Format("2006-01-02"))
 	if data, ok, err := c.cache.Get(project, cacheKey); err == nil && ok {
 		var entries []AuditEntry
 		if err := json.Unmarshal(data, &entries); err == nil {
@@ -48,7 +48,7 @@ func NewCachedMonitoringClient(inner MonitoringClient, c *cache.Cache) Monitorin
 }
 
 func (c *cachedMonitoringClient) GetRequestCountPerAPI(ctx context.Context, project, saUniqueID string, since time.Time) (map[string]int64, error) {
-	cacheKey := fmt.Sprintf("metrics-requests-%s", saUniqueID)
+	cacheKey := fmt.Sprintf("metrics-requests-%s-%s", saUniqueID, since.Format("2006-01-02"))
 	if data, ok, err := c.cache.Get(project, cacheKey); err == nil && ok {
 		var m map[string]int64
 		if err := json.Unmarshal(data, &m); err == nil {
@@ -66,7 +66,7 @@ func (c *cachedMonitoringClient) GetRequestCountPerAPI(ctx context.Context, proj
 }
 
 func (c *cachedMonitoringClient) GetAuthnEventsPerKey(ctx context.Context, project, saUniqueID string, since time.Time) (map[string]int64, error) {
-	cacheKey := fmt.Sprintf("metrics-authn-%s", saUniqueID)
+	cacheKey := fmt.Sprintf("metrics-authn-%s-%s", saUniqueID, since.Format("2006-01-02"))
 	if data, ok, err := c.cache.Get(project, cacheKey); err == nil && ok {
 		var m map[string]int64
 		if err := json.Unmarshal(data, &m); err == nil {

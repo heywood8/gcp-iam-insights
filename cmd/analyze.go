@@ -99,7 +99,7 @@ func buildReportsAndRenderer(ctx context.Context, cmd *cobra.Command) ([]analyze
 		return nil, nil, fmt.Errorf("create monitoring client: %w", err)
 	}
 
-	lookbackDays, _ := cmd.Root().PersistentFlags().GetInt("lookback-days")
+	lookbackDays := viper.GetInt("lookback_days")
 	if lookbackDays == 0 {
 		lookbackDays = 90
 	}
