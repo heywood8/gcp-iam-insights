@@ -32,6 +32,7 @@ func init() {
 	rootCmd.PersistentFlags().Bool("no-cache", false, "Skip cache and always fetch fresh data")
 	rootCmd.PersistentFlags().Duration("cache-ttl", 24*time.Hour, "Cache TTL duration")
 	rootCmd.PersistentFlags().Int("lookback-days", 30, "Number of days to look back for metrics and audit logs")
+	rootCmd.PersistentFlags().Bool("debug", false, "Enable verbose debug logging")
 
 	viper.BindPFlag("project", rootCmd.PersistentFlags().Lookup("project"))
 	viper.BindPFlag("output", rootCmd.PersistentFlags().Lookup("output"))
@@ -40,4 +41,5 @@ func init() {
 	viper.BindPFlag("no_cache", rootCmd.PersistentFlags().Lookup("no-cache"))
 	viper.BindPFlag("cache_ttl", rootCmd.PersistentFlags().Lookup("cache-ttl"))
 	viper.BindPFlag("lookback_days", rootCmd.PersistentFlags().Lookup("lookback-days"))
+	viper.BindPFlag("debug", rootCmd.PersistentFlags().Lookup("debug"))
 }

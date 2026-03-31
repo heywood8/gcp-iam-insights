@@ -16,6 +16,7 @@ type BuildConfig struct {
 	Project              string
 	LookbackWindow       time.Duration
 	ServiceAccountFilter string // if set, only analyze this SA email
+	Debug                bool   // if true, log verbose per-SA details
 
 	IAM        gcp.IAMClient
 	Asset      gcp.AssetClient
@@ -135,18 +136,24 @@ func BuildReports(ctx context.Context, cfg BuildConfig) ([]ServiceAccountReport,
 				fmt.Fprintf(buf, "  error: list keys for %s: %v\n", account.Email, err)
 				return
 			}
-			fmt.Fprintf(buf, "  - Found %d key(s)\n", len(gcpKeys))
+			if cfg.Debug {
+				fmt.Fprintf(buf, "  - Found %d key(s)\n", len(gcpKeys))
+			}
 
 			// 5. Fetch Cloud Monitoring metrics (non-fatal: log warning and continue with empty data).
-			fmt.Fprintf(buf, "  - Querying Cloud Monitoring metrics...\n")
+			if cfg.Debug {
+				fmt.Fprintf(buf, "  - Querying Cloud Monitoring metrics...\n")
+			}
 
 			// API usage per service from metrics
 			apiUsageFromMetrics := map[string]int64{}
 			if usage, err := cfg.Monitoring.GetAPIUsagePerService(ctx, cfg.Project, account.UniqueID, since); err != nil {
-				fmt.Fprintf(buf, "  warning: could not fetch API usage metrics: %v\n", err)
+				if cfg.Debug {
+					fmt.Fprintf(buf, "  warning: could not fetch API usage metrics: %v\n", err)
+				}
 			} else {
 				apiUsageFromMetrics = usage
-				if len(usage) > 0 {
+				if cfg.Debug && len(usage) > 0 {
 					fmt.Fprintf(buf, "  - Found API usage for %d service(s) from metrics\n", len(usage))
 				}
 			}
@@ -154,7 +161,9 @@ func BuildReports(ctx context.Context, cfg BuildConfig) ([]ServiceAccountReport,
 			// Authn events per key
 			authnPerKey := map[string]int64{}
 			if authn, err := cfg.Monitoring.GetAuthnEventsPerKey(ctx, cfg.Project, account.UniqueID, since); err != nil {
-				fmt.Fprintf(buf, "  warning: could not fetch authn event metrics: %v\n", err)
+				if cfg.Debug {
+					fmt.Fprintf(buf, "  warning: could not fetch authn event metrics: %v\n", err)
+				}
 			} else {
 				authnPerKey = authn
 			}
@@ -171,7 +180,7 @@ func BuildReports(ctx context.Context, cfg BuildConfig) ([]ServiceAccountReport,
 
 			// 6. Use pre-fetched audit logs from batch query.
 			logEntries := auditLogsBySA[account.Email]
-			if len(logEntries) > 0 {
+			if cfg.Debug && len(logEntries) > 0 {
 				fmt.Fprintf(buf, "  - Found %d audit log entries\n", len(logEntries))
 			}
 

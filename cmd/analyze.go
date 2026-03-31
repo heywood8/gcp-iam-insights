@@ -152,6 +152,7 @@ func buildReportsAndRenderer(ctx context.Context, cmd *cobra.Command) ([]analyze
 		Project:              project,
 		LookbackWindow:       lookback,
 		ServiceAccountFilter: saFilter,
+		Debug:                viper.GetBool("debug"),
 		IAM:                  iamClient,
 		Asset:                assetClient,
 		Logging:              loggingCached,
