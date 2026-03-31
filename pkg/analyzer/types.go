@@ -1,6 +1,10 @@
 package analyzer
 
-import "time"
+import (
+	"fmt"
+	"net/url"
+	"time"
+)
 
 // Severity represents the urgency of a finding.
 type Severity string
@@ -31,6 +35,8 @@ type Finding struct {
 	Remediation    string
 	// Extra structured data for JSON/CSV output (key age, suggested roles, etc.)
 	Details map[string]string
+	// GCP Console URLs for investigation
+	Links map[string]string
 }
 
 // SAKey represents a service account key with its observed authentication activity.
@@ -71,4 +77,37 @@ type ServiceAccountReport struct {
 
 	// LookbackWindow is the duration used for metric and log queries.
 	LookbackWindow time.Duration
+}
+
+// GenerateConsoleLinks creates GCP Console URLs for investigating a service account.
+func GenerateConsoleLinks(project, saEmail string, lookbackWindow time.Duration) map[string]string {
+	links := make(map[string]string)
+
+	// Service account details page
+	links["service_account"] = fmt.Sprintf(
+		"https://console.cloud.google.com/iam-admin/serviceaccounts/details/%s?project=%s",
+		url.QueryEscape(saEmail),
+		project,
+	)
+
+	// Audit logs for this service account
+	// Build a Logs Explorer query filtering by principalEmail
+	logsQuery := fmt.Sprintf(
+		`protoPayload.authenticationInfo.principalEmail="%s"`,
+		saEmail,
+	)
+	links["audit_logs"] = fmt.Sprintf(
+		"https://console.cloud.google.com/logs/query;query=%s?project=%s",
+		url.QueryEscape(logsQuery),
+		project,
+	)
+
+	// Service account metrics/monitoring page
+	links["metrics"] = fmt.Sprintf(
+		"https://console.cloud.google.com/iam-admin/serviceaccounts/details/%s/metrics?project=%s",
+		url.QueryEscape(saEmail),
+		project,
+	)
+
+	return links
 }

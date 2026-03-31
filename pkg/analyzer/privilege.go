@@ -24,6 +24,7 @@ type PrivilegeConfig struct {
 // AnalyzePrivilege returns privilege findings for a single ServiceAccountReport.
 func AnalyzePrivilege(report ServiceAccountReport, cfg PrivilegeConfig) []Finding {
 	var findings []Finding
+	links := GenerateConsoleLinks(cfg.Project, report.Email, report.LookbackWindow)
 
 	// 1. Flag primitive roles immediately.
 	for _, role := range report.Roles {
@@ -35,6 +36,7 @@ func AnalyzePrivilege(report ServiceAccountReport, cfg PrivilegeConfig) []Findin
 				Message:        fmt.Sprintf("service account has primitive role %s — always too broad", role),
 				Remediation:    fmt.Sprintf("replace %s with a predefined or custom role scoped to actual API usage", role),
 				Details:        map[string]string{"role": role},
+				Links:          links,
 			})
 		}
 	}
@@ -58,6 +60,7 @@ func AnalyzePrivilege(report ServiceAccountReport, cfg PrivilegeConfig) []Findin
 						"key_id":       key.KeyID,
 						"key_age_days": fmt.Sprintf("%d", ageDays),
 					},
+					Links: links,
 				})
 			}
 		}
@@ -111,6 +114,7 @@ func AnalyzePrivilege(report ServiceAccountReport, cfg PrivilegeConfig) []Findin
 		Message:        msg,
 		Remediation:    remediation,
 		Details:        details,
+		Links:          links,
 	})
 
 	return findings

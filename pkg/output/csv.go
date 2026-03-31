@@ -14,7 +14,7 @@ type csvRenderer struct {
 
 func (r *csvRenderer) Render(findings []analyzer.Finding) error {
 	w := csv.NewWriter(r.w)
-	if err := w.Write([]string{"service_account", "severity", "type", "message", "remediation"}); err != nil {
+	if err := w.Write([]string{"service_account", "severity", "type", "message", "remediation", "service_account_url", "audit_logs_url", "metrics_url"}); err != nil {
 		return fmt.Errorf("write CSV header: %w", err)
 	}
 	for _, f := range findings {
@@ -24,6 +24,9 @@ func (r *csvRenderer) Render(findings []analyzer.Finding) error {
 			string(f.Type),
 			f.Message,
 			f.Remediation,
+			f.Links["service_account"],
+			f.Links["audit_logs"],
+			f.Links["metrics"],
 		}); err != nil {
 			return fmt.Errorf("write CSV row: %w", err)
 		}

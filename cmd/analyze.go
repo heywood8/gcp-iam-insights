@@ -60,6 +60,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 			Project:            viper.GetString("project"),
 		})...)
 		all = append(all, analyzer.AnalyzeDormancy(r, analyzer.DormancyConfig{
+			Project:      viper.GetString("project"),
 			WarnDays:     warnDays,
 			CriticalDays: criticalDays,
 		})...)
