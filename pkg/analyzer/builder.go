@@ -3,6 +3,7 @@ package analyzer
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/heywood8/gcp-iam-insights/pkg/gcp"
@@ -78,14 +79,19 @@ func BuildReports(ctx context.Context, cfg BuildConfig) ([]ServiceAccountReport,
 			return nil, fmt.Errorf("list keys for %s: %w", sa.Email, err)
 		}
 
-		// 5. Fetch Cloud Monitoring metrics.
-		activeAPIs, err := cfg.Monitoring.GetRequestCountPerAPI(ctx, cfg.Project, sa.UniqueID, since)
-		if err != nil {
-			return nil, fmt.Errorf("get request count for %s: %w", sa.Email, err)
+		// 5. Fetch Cloud Monitoring metrics (non-fatal: log warnings and continue with empty data).
+		activeAPIs := map[string]int64{}
+		if apis, err := cfg.Monitoring.GetRequestCountPerAPI(ctx, cfg.Project, sa.UniqueID, since); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not fetch request count metrics for %s: %v\n", sa.Email, err)
+		} else {
+			activeAPIs = apis
 		}
-		authnPerKey, err := cfg.Monitoring.GetAuthnEventsPerKey(ctx, cfg.Project, sa.UniqueID, since)
-		if err != nil {
-			return nil, fmt.Errorf("get authn events for %s: %w", sa.Email, err)
+
+		authnPerKey := map[string]int64{}
+		if authn, err := cfg.Monitoring.GetAuthnEventsPerKey(ctx, cfg.Project, sa.UniqueID, since); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not fetch authn event metrics for %s: %v\n", sa.Email, err)
+		} else {
+			authnPerKey = authn
 		}
 
 		// Merge authn events into keys.
@@ -98,10 +104,12 @@ func BuildReports(ctx context.Context, cfg BuildConfig) ([]ServiceAccountReport,
 			})
 		}
 
-		// 6. Fetch audit logs.
-		logEntries, err := cfg.Logging.QueryAuditLogs(ctx, cfg.Project, sa.Email, since)
-		if err != nil {
-			return nil, fmt.Errorf("query audit logs for %s: %w", sa.Email, err)
+		// 6. Fetch audit logs (non-fatal: log warning and continue with empty data).
+		var logEntries []gcp.AuditEntry
+		if entries, err := cfg.Logging.QueryAuditLogs(ctx, cfg.Project, sa.Email, since); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not query audit logs for %s: %v\n", sa.Email, err)
+		} else {
+			logEntries = entries
 		}
 
 		// Deduplicate exercised permissions and find APIs with no log coverage.
