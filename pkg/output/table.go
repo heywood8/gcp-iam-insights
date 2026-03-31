@@ -1,8 +1,8 @@
 package output
 
 import (
+	"fmt"
 	"io"
-	"strings"
 
 	"github.com/fatih/color"
 	"github.com/heywood8/gcp-iam-insights/pkg/analyzer"
@@ -13,53 +13,35 @@ type tableRenderer struct {
 	w io.Writer
 }
 
-// shortenSAName strips the @<project>.iam.gserviceaccount.com suffix from SA emails.
-func shortenSAName(email string) string {
-	if idx := strings.Index(email, "@"); idx != -1 {
-		return email[:idx]
-	}
-	return email
-}
-
 func (r *tableRenderer) Render(findings []analyzer.Finding) error {
 	table := tablewriter.NewTable(r.w,
-		tablewriter.WithHeader([]string{"Service Account", "Severity", "Type", "Message", "Remediation", "Links"}),
+		tablewriter.WithHeader([]string{"Service Account", "Severity", "Type", "Message", "Remediation"}),
 	)
 
 	for _, f := range findings {
 		severity := colorSeverity(f.Severity)
-		links := formatLinks(f.Links)
 		if err := table.Append([]string{
 			shortenSAName(f.ServiceAccount),
 			severity,
 			string(f.Type),
 			f.Message,
 			f.Remediation,
-			links,
 		}); err != nil {
 			return err
 		}
 	}
 
-	return table.Render()
-}
+	if err := table.Render(); err != nil {
+		return err
+	}
 
-func formatLinks(links map[string]string) string {
-	if len(links) == 0 {
-		return ""
-	}
-	// Return clickable links in a compact format
-	result := ""
-	if sa, ok := links["service_account"]; ok {
-		result += "SA: " + sa + "\n"
-	}
-	if logs, ok := links["audit_logs"]; ok {
-		result += "Logs: " + logs + "\n"
-	}
-	if metrics, ok := links["metrics"]; ok {
-		result += "Metrics: " + metrics
-	}
-	return result
+	// Print link templates footer
+	fmt.Fprintf(r.w, "\n%s\n", color.New(color.Bold).Sprint("GCP Console Links:"))
+	fmt.Fprintf(r.w, "  Service Account: https://console.cloud.google.com/iam-admin/serviceaccounts/details/<SA_EMAIL>?project=<PROJECT>\n")
+	fmt.Fprintf(r.w, "  Audit Logs:      https://console.cloud.google.com/logs/query;query=protoPayload.authenticationInfo.principalEmail=\"<SA_EMAIL>\"?project=<PROJECT>\n")
+	fmt.Fprintf(r.w, "  Metrics:         https://console.cloud.google.com/iam-admin/serviceaccounts/details/<SA_EMAIL>/metrics?project=<PROJECT>\n")
+
+	return nil
 }
 
 func colorSeverity(s analyzer.Severity) string {

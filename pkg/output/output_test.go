@@ -37,11 +37,16 @@ func TestTableRenderer(t *testing.T) {
 		t.Fatalf("Render: %v", err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "sa@project.iam.gserviceaccount.com") {
-		t.Error("expected SA email in table output")
+	// Table output should have shortened SA name (no @domain suffix)
+	if !strings.Contains(out, "sa") || strings.Contains(out, "sa@project") {
+		t.Error("expected shortened SA name in table output")
 	}
 	if !strings.Contains(out, "CRITICAL") {
 		t.Error("expected CRITICAL in table output")
+	}
+	// Should have link templates footer
+	if !strings.Contains(out, "GCP Console Links:") {
+		t.Error("expected link templates footer")
 	}
 }
 
