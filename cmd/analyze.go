@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/heywood8/gcp-iam-insights/pkg/analyzer"
 	"github.com/heywood8/gcp-iam-insights/pkg/auth"
 	"github.com/heywood8/gcp-iam-insights/pkg/cache"
+	"github.com/heywood8/gcp-iam-insights/pkg/catalog"
 	"github.com/heywood8/gcp-iam-insights/pkg/gcp"
 	"github.com/heywood8/gcp-iam-insights/pkg/output"
 	"github.com/heywood8/gcp-iam-insights/pkg/roles"
@@ -47,6 +49,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	catalogClient := buildCatalogClient()
 	suggestCustom, _ := cmd.Flags().GetBool("suggest-custom-roles")
 	warnDays, _ := cmd.Flags().GetInt("warn-days")
 	criticalDays, _ := cmd.Flags().GetInt("critical-days")
@@ -54,11 +57,18 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(os.Stderr, "Running privilege and dormancy analyzers...\n")
 	var all []analyzer.Finding
 	for _, r := range reports {
-		all = append(all, analyzer.AnalyzePrivilege(r, analyzer.PrivilegeConfig{
+		privCfg := analyzer.PrivilegeConfig{
 			Registry:           roleRegistry,
 			SuggestCustomRoles: suggestCustom,
 			Project:            viper.GetString("project"),
-		})...)
+			Catalog:            catalogClient,
+		}
+		all = append(all, analyzer.AnalyzePrivilege(r, privCfg)...)
+		catalogFindings, err := analyzer.AnalyzeCatalogPrivilege(ctx, r, privCfg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: catalog privilege analysis for %s: %v\n", r.Email, err)
+		}
+		all = append(all, catalogFindings...)
 		all = append(all, analyzer.AnalyzeDormancy(r, analyzer.DormancyConfig{
 			Project:      viper.GetString("project"),
 			WarnDays:     warnDays,
@@ -177,4 +187,17 @@ func loadRoleRegistry() (roles.Registry, error) {
 		return nil, fmt.Errorf("load roles registry: %w", err)
 	}
 	return reg, nil
+}
+
+// buildCatalogClient creates a catalog client using the cache dir and TTL from flags.
+// The catalog cache uses a 7-day TTL since IAM role definitions rarely change.
+func buildCatalogClient() *catalog.Client {
+	if viper.GetBool("no_cache") {
+		return catalog.New("", 0)
+	}
+	baseDir, err := cache.DefaultBaseDir()
+	if err != nil {
+		return catalog.New("", 0)
+	}
+	return catalog.New(filepath.Join(baseDir, "catalog"), 7*24*time.Hour)
 }

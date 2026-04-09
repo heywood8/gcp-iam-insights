@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -15,13 +16,25 @@ var rootCmd = &cobra.Command{
 	Long: `gcp-iam-insights analyzes service accounts in a GCP project for:
   - Over-privilege: accounts bound to broader roles than they need
   - Dormancy: accounts inactive beyond configurable thresholds`,
+	SilenceUsage: true,
 }
 
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, friendlyError(err))
 		os.Exit(1)
 	}
+}
+
+func friendlyError(err error) string {
+	msg := err.Error()
+	if strings.Contains(msg, "invalid_rapt") || strings.Contains(msg, "reauth related error") {
+		return "error: GCP credentials require re-authentication\n\nRun: gcloud auth application-default login"
+	}
+	if strings.Contains(msg, "cannot fetch token") || strings.Contains(msg, "invalid_grant") {
+		return "error: GCP credentials are invalid or expired\n\nRun: gcloud auth application-default login"
+	}
+	return "error: " + msg
 }
 
 func init() {

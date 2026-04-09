@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"fmt"
+	"os"
 
 	"github.com/heywood8/gcp-iam-insights/pkg/analyzer"
 	"github.com/spf13/cobra"
@@ -31,15 +33,23 @@ func runPrivilege(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	catalogClient := buildCatalogClient()
 	suggestCustom, _ := cmd.Flags().GetBool("suggest-custom-roles")
 
 	var findings []analyzer.Finding
 	for _, r := range reports {
-		findings = append(findings, analyzer.AnalyzePrivilege(r, analyzer.PrivilegeConfig{
+		privCfg := analyzer.PrivilegeConfig{
 			Registry:           registry,
 			SuggestCustomRoles: suggestCustom,
 			Project:            viper.GetString("project"),
-		})...)
+			Catalog:            catalogClient,
+		}
+		findings = append(findings, analyzer.AnalyzePrivilege(r, privCfg)...)
+		catalogFindings, err := analyzer.AnalyzeCatalogPrivilege(ctx, r, privCfg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: catalog privilege analysis for %s: %v\n", r.Email, err)
+		}
+		findings = append(findings, catalogFindings...)
 	}
 
 	return renderer.Render(findings)

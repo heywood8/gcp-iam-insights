@@ -1,6 +1,7 @@
 package analyzer
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -14,14 +15,24 @@ var primitiveRoles = map[string]bool{
 	"roles/viewer": true,
 }
 
+// CatalogClient fetches IAM role and permission data from an external catalog.
+type CatalogClient interface {
+	RolesForPermission(ctx context.Context, perm string) ([]string, error)
+	PermissionsForRole(ctx context.Context, role string) ([]string, error)
+}
+
 // PrivilegeConfig holds configuration for the privilege analyzer.
 type PrivilegeConfig struct {
 	Registry           roles.Registry
 	SuggestCustomRoles bool
 	Project            string // used in generated gcloud commands
+	Catalog            CatalogClient
 }
 
 // AnalyzePrivilege returns privilege findings for a single ServiceAccountReport.
+// It handles primitive role detection, unused key detection, and (when Catalog is
+// nil) registry-based over-privilege detection. Catalog-based over-privilege
+// detection is handled by AnalyzeCatalogPrivilege.
 func AnalyzePrivilege(report ServiceAccountReport, cfg PrivilegeConfig) []Finding {
 	var findings []Finding
 	links := GenerateConsoleLinks(cfg.Project, report.Email, report.LookbackWindow)
@@ -66,15 +77,21 @@ func AnalyzePrivilege(report ServiceAccountReport, cfg PrivilegeConfig) []Findin
 		}
 	}
 
-	// 3. If no exercised permissions — can't suggest role replacements.
+	// 3. If a catalog client is provided, over-privilege detection is handled
+	// by AnalyzeCatalogPrivilege. Skip the registry-based fallback.
+	if cfg.Catalog != nil {
+		return findings
+	}
+
+	// 4. If no exercised permissions — can't suggest role replacements.
 	if len(report.ExercisedPerms) == 0 {
 		return findings
 	}
 
-	// 4. Find minimal covering set of predefined roles.
+	// 5. Find minimal covering set of predefined roles (registry-based fallback).
 	suggested, uncovered := cfg.Registry.FindMinimalRoles(report.ExercisedPerms)
 
-	// 5. If current roles grant no more permissions than the exercised set, no over-privilege finding.
+	// 6. If current roles grant no more permissions than the exercised set, no over-privilege finding.
 	if !hasExcessPermissions(report.Roles, report.ExercisedPerms, cfg.Registry) {
 		return findings
 	}
@@ -120,6 +137,113 @@ func AnalyzePrivilege(report ServiceAccountReport, cfg PrivilegeConfig) []Findin
 	return findings
 }
 
+// AnalyzeCatalogPrivilege detects over-privilege using the catalog client.
+// It is a no-op if cfg.Catalog is nil or the SA has no exercised permissions.
+//
+// Algorithm:
+//  1. For each exercised permission, fetch the roles that include it.
+//  2. Union all candidate roles into a pool.
+//  3. Fetch the full permission set for each candidate role.
+//  4. Greedy set cover to find the minimal roles covering all exercised permissions.
+//  5. If the current roles grant more than the exercised set, emit a finding.
+func AnalyzeCatalogPrivilege(ctx context.Context, report ServiceAccountReport, cfg PrivilegeConfig) ([]Finding, error) {
+	if cfg.Catalog == nil || len(report.ExercisedPerms) == 0 {
+		return nil, nil
+	}
+
+	links := GenerateConsoleLinks(cfg.Project, report.Email, report.LookbackWindow)
+
+	// Step 1+2: collect candidate roles from all exercised permission pages.
+	candidateSet := make(map[string]bool)
+	for _, perm := range report.ExercisedPerms {
+		rolesForPerm, err := cfg.Catalog.RolesForPermission(ctx, perm)
+		if err != nil {
+			// soft skip — this permission's candidates are excluded
+			continue
+		}
+		for _, r := range rolesForPerm {
+			candidateSet[r] = true
+		}
+	}
+	if len(candidateSet) == 0 {
+		return nil, nil
+	}
+
+	// Step 3: fetch permission sets for all candidates.
+	candidatePerms := make(map[string][]string, len(candidateSet))
+	for role := range candidateSet {
+		perms, err := cfg.Catalog.PermissionsForRole(ctx, role)
+		if err != nil {
+			continue // skip roles we can't fetch
+		}
+		candidatePerms[role] = perms
+	}
+	if len(candidatePerms) == 0 {
+		return nil, nil
+	}
+
+	// Step 4: greedy set cover over candidate roles.
+	reg := roles.Registry(candidatePerms)
+	suggested, _ := reg.FindMinimalRoles(report.ExercisedPerms)
+	if len(suggested) == 0 {
+		return nil, nil
+	}
+
+	// Step 5: check whether current roles grant permissions beyond what was exercised.
+	// Fetch permissions for current roles that weren't already in the candidate pool.
+	currentPerms := make(map[string][]string, len(report.Roles))
+	for _, role := range report.Roles {
+		if perms, ok := candidatePerms[role]; ok {
+			currentPerms[role] = perms
+		} else {
+			// current role not in candidates (e.g. a broader role) — fetch it
+			perms, err := cfg.Catalog.PermissionsForRole(ctx, role)
+			if err == nil {
+				currentPerms[role] = perms
+			}
+		}
+	}
+
+	if !hasExcessPermissionsMap(report.Roles, report.ExercisedPerms, currentPerms) {
+		return nil, nil
+	}
+
+	details := map[string]string{
+		"current_roles":   strings.Join(report.Roles, ", "),
+		"suggested_roles": strings.Join(suggested, ", "),
+	}
+
+	return []Finding{{
+		ServiceAccount: report.Email,
+		Severity:       SeverityWarn,
+		Type:           FindingTypeOverPrivilege,
+		Message: fmt.Sprintf(
+			"service account has broader permissions than it uses (%d exercised); suggest: %s",
+			len(report.ExercisedPerms), strings.Join(suggested, ", "),
+		),
+		Remediation: strings.Join(suggested, ", "),
+		Details:     details,
+		Links:       links,
+	}}, nil
+}
+
+// hasExcessPermissionsMap returns true when the permissions granted by the current
+// roles (looked up in rolePerms) are a strict superset of the exercised permissions.
+func hasExcessPermissionsMap(currentRoles []string, exercisedPerms []string, rolePerms map[string][]string) bool {
+	exercised := make(map[string]bool, len(exercisedPerms))
+	for _, p := range exercisedPerms {
+		exercised[p] = true
+	}
+	for _, role := range currentRoles {
+		for _, perm := range rolePerms[role] {
+			if !exercised[perm] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // hasExcessPermissions returns true when the permissions granted by the current
 // roles are a strict superset of the exercised permissions. If the current
 // roles grant only what was exercised (or less), there is no over-privilege.
@@ -155,4 +279,3 @@ func sanitizeRoleName(email string) string {
 	}
 	return result
 }
-
