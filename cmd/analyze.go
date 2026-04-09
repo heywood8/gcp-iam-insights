@@ -135,12 +135,7 @@ func buildReportsAndRenderer(ctx context.Context, cmd *cobra.Command) ([]analyze
 	}
 	lookback := time.Duration(lookbackDays) * 24 * time.Hour
 
-	saFilter, _ := cmd.Flags().GetString("service-account")
-	if saFilter == "" {
-		if p := cmd.Parent(); p != nil {
-			saFilter, _ = p.Flags().GetString("service-account")
-		}
-	}
+	saFilter := resolveServiceAccountFilter(cmd)
 
 	// Wrap logging + monitoring clients with cache if not disabled.
 	noCache := viper.GetBool("no_cache")
@@ -179,6 +174,32 @@ func buildReportsAndRenderer(ctx context.Context, cmd *cobra.Command) ([]analyze
 	}
 
 	return reports, renderer, nil
+}
+
+func resolveServiceAccountFilter(cmd *cobra.Command) string {
+	if cmd == nil {
+		return ""
+	}
+
+	for c := cmd; c != nil; c = c.Parent() {
+		if c.Flags().Lookup("service-account") != nil {
+			if v, err := c.Flags().GetString("service-account"); err == nil && v != "" {
+				return v
+			}
+		}
+		if c.PersistentFlags().Lookup("service-account") != nil {
+			if v, err := c.PersistentFlags().GetString("service-account"); err == nil && v != "" {
+				return v
+			}
+		}
+		if c.InheritedFlags().Lookup("service-account") != nil {
+			if v, err := c.InheritedFlags().GetString("service-account"); err == nil && v != "" {
+				return v
+			}
+		}
+	}
+
+	return ""
 }
 
 func loadRoleRegistry() (roles.Registry, error) {

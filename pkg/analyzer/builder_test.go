@@ -58,6 +58,23 @@ func (f *fakeLogging) QueryAuditLogsBatch(_ context.Context, _ string, saEmails 
 	return result, nil
 }
 
+type fakeLoggingCapture struct {
+	received []string
+}
+
+func (f *fakeLoggingCapture) QueryAuditLogs(_ context.Context, _, saEmail string, _ time.Time) ([]gcp.AuditEntry, error) {
+	return []gcp.AuditEntry{{ServiceAccount: saEmail, Timestamp: time.Now()}}, nil
+}
+
+func (f *fakeLoggingCapture) QueryAuditLogsBatch(_ context.Context, _ string, saEmails []string, _ time.Time) (map[string][]gcp.AuditEntry, error) {
+	f.received = append([]string{}, saEmails...)
+	result := make(map[string][]gcp.AuditEntry, len(saEmails))
+	for _, email := range saEmails {
+		result[email] = []gcp.AuditEntry{}
+	}
+	return result, nil
+}
+
 // fakeMonitoring implements gcp.MonitoringClient.
 type fakeMonitoring struct{}
 
@@ -126,5 +143,53 @@ func TestBuildReports_SingleSAFilter(t *testing.T) {
 	// fakeIAM returns one SA that doesn't match the filter
 	if len(reports) != 0 {
 		t.Fatalf("expected 0 reports after filter, got %d", len(reports))
+	}
+}
+
+type fakeIAMMulti struct{}
+
+func (f *fakeIAMMulti) ListServiceAccounts(_ context.Context, _ string) ([]gcp.ServiceAccount, error) {
+	return []gcp.ServiceAccount{
+		{Email: "first@project.iam.gserviceaccount.com", UniqueID: "uid-1", DisplayName: "First"},
+		{Email: "second@project.iam.gserviceaccount.com", UniqueID: "uid-2", DisplayName: "Second"},
+	}, nil
+}
+
+func (f *fakeIAMMulti) ListProjectBindings(_ context.Context, _ string) ([]gcp.ProjectBinding, error) {
+	return []gcp.ProjectBinding{
+		{Role: "roles/viewer", Members: []string{"serviceAccount:first@project.iam.gserviceaccount.com"}},
+		{Role: "roles/viewer", Members: []string{"serviceAccount:second@project.iam.gserviceaccount.com"}},
+	}, nil
+}
+
+func (f *fakeIAMMulti) ListServiceAccountKeys(_ context.Context, _, _ string) ([]gcp.SAKey, error) {
+	return nil, nil
+}
+
+func TestBuildReports_FilterLimitsBatchLogQuery(t *testing.T) {
+	ctx := context.Background()
+	logging := &fakeLoggingCapture{}
+	filter := "second@project.iam.gserviceaccount.com"
+
+	reports, err := analyzer.BuildReports(ctx, analyzer.BuildConfig{
+		Project:              "my-project",
+		LookbackWindow:       90 * 24 * time.Hour,
+		ServiceAccountFilter: filter,
+		IAM:                  &fakeIAMMulti{},
+		Asset:                &fakeAsset{},
+		Logging:              logging,
+		Monitoring:           &fakeMonitoring{},
+	})
+	if err != nil {
+		t.Fatalf("BuildReports: %v", err)
+	}
+	if len(reports) != 1 {
+		t.Fatalf("expected 1 report, got %d", len(reports))
+	}
+	if reports[0].Email != filter {
+		t.Fatalf("expected filtered email %q, got %q", filter, reports[0].Email)
+	}
+	if len(logging.received) != 1 || logging.received[0] != filter {
+		t.Fatalf("expected batch query for [%q], got %v", filter, logging.received)
 	}
 }

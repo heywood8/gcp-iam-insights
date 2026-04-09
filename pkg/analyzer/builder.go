@@ -103,7 +103,7 @@ func BuildReports(ctx context.Context, cfg BuildConfig) ([]ServiceAccountReport,
 	fmt.Fprintf(os.Stderr, "\nAnalyzing service accounts (lookback: %d days)...\n", int(cfg.LookbackWindow.Hours()/24))
 
 	// Fetch audit logs in a single batched query for all SAs to avoid quota exhaustion
-	fmt.Fprintf(os.Stderr, "Fetching audit logs for all service accounts (batched query)...\n")
+	fmt.Fprintf(os.Stderr, "Fetching audit logs for %d service account(s) (batched query)...\n", len(accountsToProcess))
 	saEmails := make([]string, len(accountsToProcess))
 	for i, sa := range accountsToProcess {
 		saEmails[i] = sa.Email
