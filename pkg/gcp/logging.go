@@ -29,17 +29,27 @@ type LoggingClient interface {
 	QueryAuditLogsBatch(ctx context.Context, project string, saEmails []string, since time.Time) (map[string][]AuditEntry, error)
 }
 
+// DefaultMaxLogEntriesPerSA is the maximum audit log entries read per service
+// account in a single batch query. Limits Cloud Logging read API calls.
+const DefaultMaxLogEntriesPerSA = 1000
+
 type realLoggingClient struct {
-	client *logging.Client
+	client          *logging.Client
+	maxEntriesPerSA int32
 }
 
 // NewLoggingClient creates a real LoggingClient.
-func NewLoggingClient(ctx context.Context, opts ...option.ClientOption) (LoggingClient, error) {
+// maxEntriesPerSA caps how many log entries are read per service account;
+// pass 0 to use DefaultMaxLogEntriesPerSA.
+func NewLoggingClient(ctx context.Context, maxEntriesPerSA int32, opts ...option.ClientOption) (LoggingClient, error) {
 	c, err := logging.NewClient(ctx, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("create logging client: %w", err)
 	}
-	return &realLoggingClient{client: c}, nil
+	if maxEntriesPerSA <= 0 {
+		maxEntriesPerSA = DefaultMaxLogEntriesPerSA
+	}
+	return &realLoggingClient{client: c, maxEntriesPerSA: maxEntriesPerSA}, nil
 }
 
 func (c *realLoggingClient) QueryAuditLogs(ctx context.Context, project, saEmail string, since time.Time) ([]AuditEntry, error) {
@@ -68,11 +78,13 @@ func (c *realLoggingClient) QueryAuditLogsBatch(ctx context.Context, project str
 			`AND timestamp>="%s"`,
 		emailFilters, project, project, since.UTC().Format(time.RFC3339),
 	)
+	fmt.Fprintf(os.Stderr, "Cloud Logging filter query: %s\n", filter)
 
 	req := &loggingpb.ListLogEntriesRequest{
 		ResourceNames: []string{"projects/" + project},
 		Filter:        filter,
 		OrderBy:       "timestamp desc",
+		PageSize:      c.maxEntriesPerSA,
 	}
 
 	// Retry on quota exhaustion: the iterator is not resumable, so we restart from scratch.
@@ -103,11 +115,24 @@ func (c *realLoggingClient) QueryAuditLogsBatch(ctx context.Context, project str
 func (c *realLoggingClient) iterateLogEntries(ctx context.Context, req *loggingpb.ListLogEntriesRequest, saEmails []string) (map[string][]AuditEntry, error) {
 	it := c.client.ListLogEntries(ctx, req)
 	result := make(map[string][]AuditEntry, len(saEmails))
+
+	// Track per-SA entry counts so we stop once every SA has hit maxEntriesPerSA.
+	// Entries arrive in timestamp desc order, so the first N per SA are always the most recent.
+	countBySA := make(map[string]int, len(saEmails))
+	saSet := make(map[string]bool, len(saEmails))
 	for _, email := range saEmails {
 		result[email] = []AuditEntry{}
+		saSet[email] = true
 	}
+	maxPerSA := int(c.maxEntriesPerSA)
+	saturated := 0
 
 	for {
+		// All SAs have hit their cap — no need to keep paging.
+		if saturated >= len(saEmails) {
+			break
+		}
+
 		entry, err := it.Next()
 		if err == iterator.Done {
 			break
@@ -156,9 +181,15 @@ func (c *realLoggingClient) iterateLogEntries(ctx context.Context, req *loggingp
 			}
 		}
 
-		// Group by service account
-		if ae.ServiceAccount != "" {
-			result[ae.ServiceAccount] = append(result[ae.ServiceAccount], ae)
+		// Group by service account, respecting the per-SA cap.
+		if ae.ServiceAccount != "" && saSet[ae.ServiceAccount] {
+			if countBySA[ae.ServiceAccount] < maxPerSA {
+				result[ae.ServiceAccount] = append(result[ae.ServiceAccount], ae)
+				countBySA[ae.ServiceAccount]++
+				if countBySA[ae.ServiceAccount] == maxPerSA {
+					saturated++
+				}
+			}
 		}
 	}
 	return result, nil

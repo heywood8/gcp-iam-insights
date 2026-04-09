@@ -108,7 +108,8 @@ func buildReportsAndRenderer(ctx context.Context, cmd *cobra.Command) ([]analyze
 	if err != nil {
 		return nil, nil, fmt.Errorf("create asset client: %w", err)
 	}
-	loggingClient, err := gcp.NewLoggingClient(ctx, opts...)
+	maxLogEntries := int32(viper.GetInt("max_log_entries"))
+	loggingClient, err := gcp.NewLoggingClient(ctx, maxLogEntries, opts...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("create logging client: %w", err)
 	}

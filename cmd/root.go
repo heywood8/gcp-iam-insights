@@ -46,6 +46,7 @@ func init() {
 	rootCmd.PersistentFlags().Duration("cache-ttl", 24*time.Hour, "Cache TTL duration")
 	rootCmd.PersistentFlags().Int("lookback-days", 30, "Number of days to look back for metrics and audit logs")
 	rootCmd.PersistentFlags().Bool("debug", false, "Enable verbose debug logging")
+	rootCmd.PersistentFlags().Int("max-log-entries", 1000, "Maximum audit log entries to read per service account (prevents quota exhaustion)")
 
 	viper.BindPFlag("project", rootCmd.PersistentFlags().Lookup("project"))
 	viper.BindPFlag("output", rootCmd.PersistentFlags().Lookup("output"))
@@ -55,4 +56,5 @@ func init() {
 	viper.BindPFlag("cache_ttl", rootCmd.PersistentFlags().Lookup("cache-ttl"))
 	viper.BindPFlag("lookback_days", rootCmd.PersistentFlags().Lookup("lookback-days"))
 	viper.BindPFlag("debug", rootCmd.PersistentFlags().Lookup("debug"))
+	viper.BindPFlag("max_log_entries", rootCmd.PersistentFlags().Lookup("max-log-entries"))
 }
