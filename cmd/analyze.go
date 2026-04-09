@@ -121,17 +121,9 @@ func buildReportsAndRenderer(ctx context.Context, cmd *cobra.Command) ([]analyze
 	if lookbackDays == 0 {
 		lookbackDays = 90
 	}
-	// Auto-extend lookback to cover the critical-days threshold.
-	criticalDaysFlag := 90
-	if v, err := cmd.Flags().GetInt("critical-days"); err == nil && v > 0 {
-		criticalDaysFlag = v
-	} else if cmd.Parent() != nil {
-		if v, err := cmd.Parent().Flags().GetInt("critical-days"); err == nil && v > 0 {
-			criticalDaysFlag = v
-		}
-	}
-	if criticalDaysFlag > lookbackDays {
-		lookbackDays = criticalDaysFlag
+	// Auto-extend lookback only when critical-days is explicitly set by the user.
+	if criticalDays, ok := resolveExplicitCriticalDays(cmd); ok && criticalDays > lookbackDays {
+		lookbackDays = criticalDays
 	}
 	lookback := time.Duration(lookbackDays) * 24 * time.Hour
 
@@ -200,6 +192,32 @@ func resolveServiceAccountFilter(cmd *cobra.Command) string {
 	}
 
 	return ""
+}
+
+func resolveExplicitCriticalDays(cmd *cobra.Command) (int, bool) {
+	if cmd == nil {
+		return 0, false
+	}
+
+	for c := cmd; c != nil; c = c.Parent() {
+		if f := c.Flags().Lookup("critical-days"); f != nil && f.Changed {
+			if v, err := c.Flags().GetInt("critical-days"); err == nil {
+				return v, true
+			}
+		}
+		if f := c.PersistentFlags().Lookup("critical-days"); f != nil && f.Changed {
+			if v, err := c.PersistentFlags().GetInt("critical-days"); err == nil {
+				return v, true
+			}
+		}
+		if f := c.InheritedFlags().Lookup("critical-days"); f != nil && f.Changed {
+			if v, err := c.InheritedFlags().GetInt("critical-days"); err == nil {
+				return v, true
+			}
+		}
+	}
+
+	return 0, false
 }
 
 func loadRoleRegistry() (roles.Registry, error) {
