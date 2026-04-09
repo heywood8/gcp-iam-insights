@@ -88,16 +88,20 @@ func (c *realLoggingClient) QueryAuditLogsBatch(ctx context.Context, project str
 	}
 
 	// Retry on quota exhaustion: the iterator is not resumable, so we restart from scratch.
-	const maxRetries = 3
+	// The Cloud Logging read quota resets every 60s, so we must wait >60s between attempts
+	// to land in a fresh quota window. A fixed 65s wait is safe and predictable.
+	const (
+		maxRetries   = 3
+		quotaBackoff = 65 * time.Second
+	)
 	var lastErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
-			backoff := time.Duration(attempt) * 20 * time.Second
-			fmt.Fprintf(os.Stderr, "warning: logging quota exceeded, retrying in %v (attempt %d/%d)...\n", backoff, attempt+1, maxRetries)
+			fmt.Fprintf(os.Stderr, "warning: logging quota exceeded, retrying in %v (attempt %d/%d)...\n", quotaBackoff, attempt+1, maxRetries)
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
-			case <-time.After(backoff):
+			case <-time.After(quotaBackoff):
 			}
 		}
 		result, err := c.iterateLogEntries(ctx, req, saEmails)
