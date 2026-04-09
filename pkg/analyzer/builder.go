@@ -76,6 +76,8 @@ func BuildReports(ctx context.Context, cfg BuildConfig) ([]ServiceAccountReport,
 	if assetErr != nil {
 		return nil, fmt.Errorf("search asset IAM policies: %w", assetErr)
 	}
+	fmt.Fprintf(os.Stderr, "Found %d project-level binding(s) and %d inherited binding(s) from Asset Inventory\n",
+		len(projectBindings), len(assetBindings))
 
 	allBindings := make([]gcp.ProjectBinding, 0, len(projectBindings)+len(assetBindings))
 	allBindings = append(allBindings, projectBindings...)
